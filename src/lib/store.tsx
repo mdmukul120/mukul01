@@ -8,12 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { songUrl, type BongoItem, type PlayRequest, type Song, type YtVideo } from "./api";
+import { songUrl, type BongoItem, type CatalogMovie, type PlayRequest, type Song, type YtVideo } from "./api";
 
 export type Tab = "home" | "movies" | "sports" | "live" | "music" | "youtube";
 
 export type Detail =
   | { t: "ott"; slug: string }
+  | { t: "catalog"; movie: CatalogMovie }
   | { t: "ctg"; id: number }
   | { t: "bongo"; item: BongoItem }
   | { t: "playlist"; id: string; name?: string; image?: string }

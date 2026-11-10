@@ -1,0 +1,6 @@
+{
+  "name": "Mukul Plus",
+  "description": "Mukul Plus – মুভি, লাইভ টিভি, স্পোর্টস, মিউজিক ও ইউটিউব এক জায়গায়",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

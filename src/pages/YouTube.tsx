@@ -17,7 +17,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { fmtDuration, fmtViews, timeAgo, ytIdFromUrl, ytList, type YtVideo } from "../lib/api";
+import { fmtDuration, fmtViews, timeAgo, ytIdFromUrl, ytInnerTubePlayer, ytList, type YtVideo } from "../lib/api";
 import { useApp } from "../lib/store";
 import { loadYt, YT_ERRORS } from "../components/Details";
 import "./yt.css";
@@ -138,7 +138,7 @@ const Skeletons = ({ n = 6 }: { n?: number }) => (
 
 /* ───────────────────────── watch page ───────────────────────── */
 function Player({ video, related, active, onBack, onOpen }: { video: YtVideo; related: YtVideo[]; active: boolean; onBack: () => void; onOpen: (v: YtVideo) => void }) {
-  const { toast: appToast } = useApp();
+  const { toast: appToast, play } = useApp();
   const holder = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const player = useRef<any>(null);
@@ -417,9 +417,45 @@ function Player({ video, related, active, onBack, onOpen }: { video: YtVideo; re
               <TriangleAlert size={30} color="#fbbf24" />
               <b>ভিডিও চালানো যাচ্ছে না</b>
               <p>{err}</p>
-              <a className="yt-btn pri" href={`https://www.youtube.com/watch?v=${video.id}`} target="_blank" rel="noopener noreferrer">
-                <ExternalLink size={14} /> YouTube-এ দেখুন
-              </a>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                <button
+                  type="button"
+                  className="yt-btn pri"
+                  onClick={async () => {
+                    showToast("ইনারটিউব স্ট্রিম লোড হচ্ছে…");
+                    try {
+                      const data = await ytInnerTubePlayer(video.id);
+                      const formats = data.formats || [];
+                      const sources = formats.filter((f) => f.url).map((f, i) => ({
+                        label: f.qualityLabel || f.quality || `ফরম্যাট ${i + 1}`,
+                        url: f.url!,
+                        hls: false,
+                      }));
+                      if (data.hlsManifestUrl) {
+                        sources.unshift({ label: "HLS লাইভ স্ট্রিম", url: data.hlsManifestUrl, hls: true });
+                      }
+                      if (sources.length > 0) {
+                        onBack();
+                        play({
+                          title: data.title || video.title,
+                          subtitle: data.author || video.channel,
+                          poster: data.thumbnail || video.thumb,
+                          sources,
+                        });
+                        return;
+                      }
+                      showToast("সরাসরি স্ট্রিম পাওয়া যায়নি");
+                    } catch {
+                      showToast("ইনারটিউব লোড ব্যর্থ");
+                    }
+                  }}
+                >
+                  <Play size={14} fill="currentColor" /> ইনারটিউব প্লেয়ার
+                </button>
+                <a className="yt-btn" href={`https://www.youtube.com/watch?v=${video.id}`} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink size={14} /> YouTube-এ দেখুন
+                </a>
+              </div>
             </div>
           )}
 
@@ -527,6 +563,39 @@ function Player({ video, related, active, onBack, onOpen }: { video: YtVideo; re
           )}
 
           <div className="yt-acts">
+            <button
+              className="yt-btn pri"
+              onClick={async () => {
+                showToast("ইনারটিউব স্ট্রিম লোড হচ্ছে…");
+                try {
+                  const data = await ytInnerTubePlayer(video.id);
+                  const formats = data.formats || [];
+                  const sources = formats.filter((f) => f.url).map((f, i) => ({
+                    label: f.qualityLabel || f.quality || `ফরম্যাট ${i + 1}`,
+                    url: f.url!,
+                    hls: false,
+                  }));
+                  if (data.hlsManifestUrl) {
+                    sources.unshift({ label: "HLS লাইভ স্ট্রিম", url: data.hlsManifestUrl, hls: true });
+                  }
+                  if (sources.length > 0) {
+                    onBack();
+                    play({
+                      title: data.title || video.title,
+                      subtitle: data.author || video.channel,
+                      poster: data.thumbnail || video.thumb,
+                      sources,
+                    });
+                    return;
+                  }
+                  showToast("সরাসরি স্ট্রিম পাওয়া যায়নি");
+                } catch {
+                  showToast("ইনারটিউব লোড ব্যর্থ");
+                }
+              }}
+            >
+              <Play size={14} fill="currentColor" /> ইনারটিউব ডিরেক্ট প্লে
+            </button>
             <button className="yt-btn" onClick={share}>
               <Share2 size={15} /> শেয়ার
             </button>

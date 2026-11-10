@@ -17,6 +17,10 @@ import {
   ottPlaySources,
   bestFirst,
   timeAgo,
+  fetchMovieCatalog,
+  ytInnerTubePlayer,
+  type CatalogMovie,
+  type CatalogPlayer,
   type OttItem,
   type OttSource,
   type RelatedItem,
@@ -373,7 +377,7 @@ export const YT_ERRORS: Record<number, string> = {
 };
 
 function YtView({ video, related }: { video: YtVideo; related?: YtVideo[] }) {
-  const { closeDetail, toast } = useApp();
+  const { closeDetail, play, toast } = useApp();
   const [cur, setCur] = useState(video);
   const holder = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
@@ -526,11 +530,44 @@ function YtView({ video, related }: { video: YtVideo; related?: YtVideo[] }) {
             <TriangleAlert className="h-8 w-8 text-amber-400" />
             <p className="text-sm font-semibold">ভিডিও চালানো যাচ্ছে না</p>
             <p className="max-w-[300px] text-[11px] leading-relaxed text-mute">{err}</p>
+            <button
+              onClick={async () => {
+                toast("ইনারটিউব স্ট্রিম লোড হচ্ছে…");
+                try {
+                  const data = await ytInnerTubePlayer(cur.id);
+                  const formats = data.formats || [];
+                  const sources = formats.filter((f) => f.url).map((f, i) => ({
+                    label: f.qualityLabel || f.quality || `ফরম্যাট ${i + 1}`,
+                    url: f.url!,
+                    hls: false,
+                  }));
+                  if (data.hlsManifestUrl) {
+                    sources.unshift({ label: "HLS লাইভ স্ট্রিম", url: data.hlsManifestUrl, hls: true });
+                  }
+                  if (sources.length > 0) {
+                    closeDetail();
+                    play({
+                      title: data.title || cur.title,
+                      subtitle: data.author || cur.channel,
+                      poster: data.thumbnail || cur.thumb,
+                      sources,
+                    });
+                    return;
+                  }
+                  toast("সরাসরি স্ট্রিম পাওয়া যায়নি");
+                } catch {
+                  toast("ইনারটিউব লোড ব্যর্থ");
+                }
+              }}
+              className="glow-soft flex items-center gap-2 rounded-full bg-neon px-5 py-2 text-xs font-bold text-ink active:scale-95"
+            >
+              <Play className="h-3.5 w-3.5 fill-ink" /> ইনারটিউব সরাসরি প্লেয়ার
+            </button>
             <a
               href={`https://www.youtube.com/watch?v=${cur.id}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="glow-soft flex items-center gap-2 rounded-full bg-neon px-5 py-2 text-xs font-bold text-ink active:scale-95"
+              className="card-edge flex items-center gap-2 rounded-full bg-surface2 px-5 py-2 text-xs font-bold text-white active:scale-95"
             >
               <ExternalLink className="h-3.5 w-3.5" /> YouTube-এ দেখুন
             </a>
@@ -546,12 +583,162 @@ function YtView({ video, related }: { video: YtVideo; related?: YtVideo[] }) {
   );
 }
 
+// ───────────────────────── Catalog (mapi.elochkaigolochla.com) ─────────────────────────
+function CatalogView({ movie }: { movie: CatalogMovie }) {
+  const { closeDetail, play, openDetail, toast } = useApp();
+  const catalog = useAsync(fetchMovieCatalog, []);
+  const [activeIframe, setActiveIframe] = useState<string | null>(null);
+
+  const title = movie.title_en || movie.title_ru;
+  const rating = movie.ratings?.imdb?.rating;
+  const votes = movie.ratings?.imdb?.votes;
+
+  const related = useMemo((): RelatedItem[] => {
+    if (!catalog.data) return [];
+    const all = catalog.data.flatMap((c) => c.movies);
+    return all
+      .filter((m) => m.kinopoisk_id !== movie.kinopoisk_id)
+      .slice(0, 16)
+      .map((m) => ({
+        key: String(m.kinopoisk_id),
+        title: m.title_en || m.title_ru,
+        sub: m.type === "serial" ? "সিরিজ" : "মুভি",
+        image: m.poster,
+        open: () => {
+          setActiveIframe(null);
+          openDetail({ t: "catalog", movie: m });
+        },
+      }));
+  }, [catalog.data, movie.kinopoisk_id, openDetail]);
+
+  const playPlayer = (p: CatalogPlayer) => {
+    if (p.source === "iframe") {
+      setActiveIframe(p.url);
+      toast(`${p.translator || "প্লেয়ার"} লোড হচ্ছে…`);
+      return;
+    }
+    setActiveIframe(null);
+    play({
+      title,
+      subtitle: `${p.translator || "সার্ভার"} (${p.quality || "HD"})`,
+      poster: movie.poster,
+      sources: [
+        {
+          label: p.translator || `সার্ভার ${p.server || 1}`,
+          url: p.url,
+          hls: true,
+        },
+      ],
+      related,
+    });
+  };
+
+  const primaryPlayer = movie.player.find((p) => p.source === "m3u8") || movie.player[0];
+
+  return (
+    <Shell onBack={closeDetail} hero={movie.poster}>
+      <div className="pb-24">
+        <TitleBlock poster={movie.poster} title={title}>
+          <Meta
+            items={[
+              movie.type === "serial" ? "ওয়েব সিরিজ" : "সিনেমা",
+              rating ? `IMDb ★ ${rating.toFixed(1)}${votes ? ` (${votes})` : ""}` : null,
+              `${movie.player.length}টি সার্ভার`,
+            ]}
+          />
+        </TitleBlock>
+
+        {activeIframe && (
+          <div className="mx-5 mt-5 overflow-hidden rounded-2xl border border-line bg-black">
+            <div className="flex items-center justify-between border-b border-line bg-surface px-4 py-2.5 text-xs">
+              <span className="font-semibold text-neon">অনলাইন আইফ্রেম প্লেয়ার</span>
+              <button
+                onClick={() => setActiveIframe(null)}
+                className="rounded-full bg-surface2 px-3 py-1 font-semibold text-mute hover:text-white"
+              >
+                বন্ধ করুন
+              </button>
+            </div>
+            <div className="relative aspect-video w-full bg-black">
+              <iframe
+                src={activeIframe}
+                title={title}
+                allow="autoplay; encrypted-media; fullscreen"
+                allowFullScreen
+                className="h-full w-full border-0"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="mt-5 space-y-1.5 px-5 text-[13px] leading-relaxed text-mute">
+          {movie.title_ru && movie.title_ru !== title && (
+            <p>
+              <span className="text-white/90">বিকল্প শিরোনাম:</span> {movie.title_ru}
+            </p>
+          )}
+          <p>
+            <span className="text-white/90">টাইপ:</span>{" "}
+            {movie.type === "serial" ? "টিভি / ওয়েব সিরিজ" : "ফুল মুভি"}
+          </p>
+        </div>
+
+        {primaryPlayer && (
+          <div className="mt-5 px-5">
+            <Btn
+              primary
+              onClick={() => playPlayer(primaryPlayer)}
+            >
+              <Play className="h-4 w-4 fill-ink" /> এখনই দেখুন ({primaryPlayer.translator || "প্লেয়ার ১"})
+            </Btn>
+          </div>
+        )}
+
+        {movie.player.length > 0 && (
+          <div className="mt-6 px-5">
+            <h3 className="mb-3 text-base font-bold">প্লেব্যাক সার্ভার সমূহ ({movie.player.length})</h3>
+            <div className="space-y-2.5">
+              {movie.player.map((p, i) => (
+                <button
+                  key={i}
+                  onClick={() => playPlayer(p)}
+                  className="panel flex w-full items-center gap-3 rounded-2xl p-3.5 text-left active:scale-[0.98]"
+                >
+                  <span className="glow-soft grid h-11 w-11 shrink-0 place-items-center rounded-full bg-neon text-ink">
+                    <Play className="h-4 w-4 fill-ink" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13.5px] font-bold">
+                      {p.translator || `সার্ভার ${i + 1}`}
+                    </span>
+                    <span className="block truncate text-[11px] text-mute">
+                      কোয়ালিটি: {p.quality || "HD"} • টাইপ: {p.source === "m3u8" ? "ডিরেক্ট HLS স্ট্রিম" : "আইফ্রেম প্লেয়ার"}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {related.length > 0 && (
+          <div className="mt-6">
+            <Related items={related} title="ক্যাটালগের আরও মুভি ও সিরিজ" />
+          </div>
+        )}
+      </div>
+    </Shell>
+  );
+}
+
 export default function Details() {
   const { detail } = useApp();
   if (!detail) return null;
   switch (detail.t) {
     case "ott":
       return <OttView key={detail.slug} slug={detail.slug} />;
+    case "catalog":
+      return <CatalogView key={detail.movie.kinopoisk_id} movie={detail.movie} />;
     case "ctg":
       return <CtgView key={detail.id} id={detail.id} />;
     case "bongo":

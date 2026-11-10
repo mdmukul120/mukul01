@@ -6,9 +6,11 @@ import {
   ctgList,
   ctgSearch,
   ctgTitle,
+  fetchMovieCatalog,
   ottCategories,
   ottList,
   ottSearch,
+  type CatalogMovie,
 } from "../lib/api";
 import { useApp } from "../lib/store";
 import { Chips, ErrorState, Grid, Loading, PageHeader, PosterCard, SearchBar, Sentinel, Skeletons, useAsync } from "../components/ui";
@@ -64,7 +66,7 @@ function usePaged<T>(fetchPage: (p: number) => Promise<T[]>, key: string, idOf: 
   return { items, loading, error, done, load };
 }
 
-type Src = "ott" | "ctg" | "bongo";
+type Src = "ott" | "catalog" | "ctg" | "bongo";
 
 export default function Movies() {
   const [src, setSrc] = useState<Src>("ott");
@@ -72,10 +74,11 @@ export default function Movies() {
     <div className="pb-6">
       <PageHeader title="মুভি ও সিরিজ" subtitle="সিনেমা, নাটক, ওয়েব সিরিজ" />
       <div className="px-5 pt-1">
-        <div className="grid grid-cols-3 card-edge rounded-full bg-surface p-1.5">
+        <div className="grid grid-cols-4 card-edge rounded-full bg-surface p-1.5 gap-1">
           {(
             [
               ["ott", "Mukul Plus"],
+              ["catalog", "ক্যাটালগ"],
               ["ctg", "CTGHall"],
               ["bongo", "Bongo"],
             ] as [Src, string][]
@@ -84,7 +87,7 @@ export default function Movies() {
               key={id}
               onClick={() => setSrc(id)}
               className={cn(
-                "rounded-full py-2.5 text-[13px] font-bold transition",
+                "rounded-full py-2 text-[11px] sm:text-[13px] font-bold transition text-center truncate px-1",
                 src === id ? "glow-soft bg-neon text-ink" : "text-mute"
               )}
             >
@@ -95,6 +98,7 @@ export default function Movies() {
       </div>
       <div className="mt-3">
         {src === "ott" && <OttBrowse />}
+        {src === "catalog" && <CatalogBrowse />}
         {src === "ctg" && <CtgBrowse />}
         {src === "bongo" && <BongoBrowse />}
       </div>
@@ -234,6 +238,106 @@ function BongoBrowse() {
           ))}
         </Grid>
         {items.length > limit && <Sentinel onVisible={() => setLimit((l) => l + 60)} />}
+      </div>
+    </>
+  );
+}
+
+function CatalogBrowse() {
+  const { openDetail } = useApp();
+  const { data: cats, error, loading, reload } = useAsync(fetchMovieCatalog, []);
+  const [selectedCat, setSelectedCat] = useState<string>("all");
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(30);
+
+  const allMovies = useMemo(() => {
+    if (!cats) return [];
+    const sourceCats = selectedCat === "all" ? cats : cats.filter((c) => String(c.id) === selectedCat);
+    const seen = new Set<number>();
+    const list: CatalogMovie[] = [];
+    for (const c of sourceCats) {
+      for (const m of c.movies) {
+        if (!seen.has(m.kinopoisk_id)) {
+          seen.add(m.kinopoisk_id);
+          list.push(m);
+        }
+      }
+    }
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (m) =>
+        (m.title_en && m.title_en.toLowerCase().includes(q)) ||
+        (m.title_ru && m.title_ru.toLowerCase().includes(q)) ||
+        (m.type && m.type.toLowerCase().includes(q))
+    );
+  }, [cats, selectedCat, query]);
+
+  useEffect(() => {
+    setLimit(30);
+  }, [selectedCat, query]);
+
+  const chipItems = useMemo(() => {
+    if (!cats) return [{ id: "all", label: "সব" }];
+    return [
+      { id: "all", label: "সব" },
+      ...cats.map((c) => ({
+        id: String(c.id),
+        label: c.bnName || c.name,
+        count: c.movies.length,
+      })),
+    ];
+  }, [cats]);
+
+  return (
+    <>
+      <SearchBar
+        value={query}
+        onChange={setQuery}
+        placeholder="ক্যাটালগ থেকে মুভি বা সিরিজ খুঁজুন…"
+      />
+      {cats && (
+        <Chips
+          value={selectedCat}
+          onChange={(v) => setSelectedCat(v)}
+          items={chipItems}
+        />
+      )}
+      {query && <p className="px-5 pt-3 text-xs text-mute">“{query}” এর ফলাফল ({allMovies.length}টি পাওয়া গেছে)</p>}
+      <div className="mt-2">
+        {loading && <Skeletons />}
+        {error && <ErrorState message={error} onRetry={reload} />}
+        {!loading && !error && allMovies.length === 0 && (
+          <p className="py-16 text-center text-sm text-mute">কোনো মুভি পাওয়া যায়নি</p>
+        )}
+        <Grid>
+          {allMovies.slice(0, limit).map((m) => {
+            const rating = m.ratings?.imdb?.rating;
+            const hasM3u8 = m.player.some((p) => p.source === "m3u8");
+            const badge = hasM3u8 ? "HD প্লেয়ার" : m.player[0]?.quality || (m.type === "serial" ? "সিরিজ" : "মুভি");
+            const sub = [
+              rating ? `★ ${rating.toFixed(1)}` : null,
+              m.type === "serial" ? "সিরিজ" : "মুভি",
+              `${m.player.length} সার্ভার`,
+            ]
+              .filter(Boolean)
+              .join(" • ");
+            return (
+              <PosterCard
+                key={m.kinopoisk_id}
+                image={m.poster}
+                title={m.title_en || m.title_ru}
+                badge={badge}
+                sub={sub}
+                rating={rating}
+                onClick={() => openDetail({ t: "catalog", movie: m })}
+              />
+            );
+          })}
+        </Grid>
+        {allMovies.length > limit && (
+          <Sentinel onVisible={() => setLimit((l) => l + 30)} />
+        )}
       </div>
     </>
   );

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, Radio } from "lucide-react";
-import { bongoScrape, ctgImg, ctgList, ctgTitle, fmtStart, loadSports, musicPlaylists, ottList, type SportMatch } from "../lib/api";
+import { bongoScrape, ctgImg, ctgList, ctgTitle, fetchMovieCatalog, fmtStart, loadSports, musicPlaylists, ottList, type CatalogMovie, type SportMatch } from "../lib/api";
 import { useApp } from "../lib/store";
 import { makeSports } from "../lib/related";
 import { Footer, MatchTile, PosterCard, Rail, useAsync } from "../components/ui";
@@ -109,6 +109,7 @@ export default function Home() {
   const bongo = useAsync(bongoScrape, []);
   const pls = useAsync(() => musicPlaylists("Hindi top hits", 12), []);
   const sports = useAsync(loadSports, []);
+  const catalog = useAsync(fetchMovieCatalog, []);
 
   const live = sports.data?.matches.filter((m) => m.status === "live") || [];
   const upcoming = sports.data?.matches.filter((m) => m.status !== "live") || [];
@@ -217,6 +218,22 @@ export default function Home() {
           )
         )}
       </Rail>
+
+      {catalog.data && catalog.data.length > 0 && (
+        <Rail title="ক্যাটালগ মুভি ও সিরিজ">
+          {(catalog.data[0]?.movies || []).slice(0, 15).map((m: CatalogMovie) => (
+            <PosterCard
+              key={m.kinopoisk_id}
+              className="w-[118px] shrink-0 snap-start"
+              image={m.poster}
+              title={m.title_en || m.title_ru}
+              badge={m.player.some((p) => p.source === "m3u8") ? "HD" : m.type === "serial" ? "সিরিজ" : "মুভি"}
+              rating={m.ratings?.imdb?.rating}
+              onClick={() => openDetail({ t: "catalog", movie: m })}
+            />
+          ))}
+        </Rail>
+      )}
 
       {bongo.data && (
         <Rail title="নাটক ও ওয়েব সিরিজ">

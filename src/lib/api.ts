@@ -308,6 +308,86 @@ export async function bongoScrape(): Promise<BongoCategory[]> {
 export const bongoSources = (id: string): PlaySource[] =>
   BONGO_HLS.map((b, i) => ({ label: `সার্ভার ${i + 1}`, url: `${b}?id=${id}`, hls: true }));
 
+// ───────────────────────── Movie Catalog (mapi.elochkaigolochla.com) ─────────────────────────
+export const CATALOG_API = "https://mapi.elochkaigolochla.com/api/v1/catalog";
+
+export interface CatalogPlayer {
+  url: string;
+  translator: string;
+  translator_id: number;
+  quality: string;
+  source: "m3u8" | "iframe" | string;
+  server: number;
+}
+
+export interface CatalogMovie {
+  kinopoisk_id: number;
+  type: "movie" | "serial" | string;
+  title_ru: string;
+  title_en: string;
+  poster: string;
+  ratings?: {
+    imdb?: { rating: number; votes: number };
+    bookmyshow?: { rating: number; votes: number };
+    mlab?: { rating: number; votes: number };
+  };
+  player: CatalogPlayer[];
+}
+
+export interface CatalogCategory {
+  id: number;
+  name: string;
+  index: number;
+  movies: CatalogMovie[];
+  bnName?: string;
+}
+
+export const CATALOG_CATEGORY_NAMES: Record<number, string> = {
+  22: "জনপ্রিয় মুভি ও সিরিজ",
+  4: "নতুন সংযোজিত",
+  15: "বলিউড মুভি",
+  16: "হলিউড মুভি",
+  19: "বলিউড সিরিজ",
+  20: "হলিউড সিরিজ",
+  21: "অ্যানিমেশন ও কার্টুন",
+  25: "অন্যান্য মুভি",
+};
+
+export async function fetchMovieCatalog(): Promise<CatalogCategory[]> {
+  try {
+    const res = await fetch("/api/catalog");
+    if (res.ok) {
+      const d = await res.json();
+      const list = (d.result?.full || []) as CatalogCategory[];
+      if (list.length > 0) {
+        return list.map((c) => ({
+          ...c,
+          bnName: CATALOG_CATEGORY_NAMES[c.id] || c.name,
+          movies: (c.movies || []).map((m) => ({
+            ...m,
+            title_en: decode(m.title_en || m.title_ru),
+            title_ru: decode(m.title_ru || m.title_en),
+          })),
+        }));
+      }
+    }
+  } catch {
+    // fallback to getData/proxy
+  }
+
+  const d = await getData<any>(CATALOG_API, { proxy: true, ttl: 15 * 60_000 });
+  const list = (d?.result?.full || []) as CatalogCategory[];
+  return list.map((c) => ({
+    ...c,
+    bnName: CATALOG_CATEGORY_NAMES[c.id] || c.name,
+    movies: (c.movies || []).map((m) => ({
+      ...m,
+      title_en: decode(m.title_en || m.title_ru),
+      title_ru: decode(m.title_ru || m.title_en),
+    })),
+  }));
+}
+
 // ───────────────────────── Sports ─────────────────────────
 export interface SportMatch {
   id: string;
@@ -595,14 +675,26 @@ export interface YtPage {
   next: string | null;
 }
 
-const CLIENT_KEYS = [(import.meta as any).env?.VITE_YT_KEY as string | undefined, "AIzaSyDaP1ZosCkptk4CgfPa4XoPc3aV2CA05z4", "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"].filter(Boolean) as string[];
+export const YOUTUBE_PLAYER_API_KEY = "AIzaSyDCU8hByM-4DrUqRUYnGn-3llEO78bcxq8";
+export const YOUTUBE_INNERTUBE_URL = `https://youtubei.googleapis.com/youtubei/v1/player?key=${YOUTUBE_PLAYER_API_KEY}`;
+
+const CLIENT_KEYS = [
+  YOUTUBE_PLAYER_API_KEY,
+  (import.meta as any).env?.VITE_YT_KEY as string | undefined,
+  "AIzaSyDaP1ZosCkptk4CgfPa4XoPc3aV2CA05z4",
+  "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+].filter(Boolean) as string[];
 export const YT_PAGE = 24;
 
 async function ytDirect(q: string, pageToken: string | undefined): Promise<YtPage> {
-  const call = async (path: string, params: Record<string, string>) => {
+  const call = async (path: string, params: Record<string, string | undefined>) => {
     let msg = "";
     for (const key of CLIENT_KEYS) {
-      const r = await fetch(`https://www.googleapis.com/youtube/v3/${path}?${new URLSearchParams({ ...params, key })}`, {
+      const cleanParams: Record<string, string> = { key };
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined) cleanParams[k] = v;
+      }
+      const r = await fetch(`https://www.googleapis.com/youtube/v3/${path}?${new URLSearchParams(cleanParams)}`, {
         referrerPolicy: "origin",
       });
       const d = await r.json().catch(() => ({}));
@@ -684,4 +776,75 @@ export function timeAgo(iso?: string) {
   if (d < 2592000) return Math.floor(d / 86400) + " দিন আগে";
   if (d < 31536000) return Math.floor(d / 2592000) + " মাস আগে";
   return Math.floor(d / 31536000) + " বছর আগে";
+}
+
+export interface YtStreamFormat {
+  itag: number;
+  url?: string;
+  mimeType?: string;
+  quality?: string;
+  qualityLabel?: string;
+  bitrate?: number;
+  width?: number;
+  height?: number;
+  audioQuality?: string;
+}
+
+export interface YtPlayerData {
+  videoId: string;
+  title: string;
+  author: string;
+  lengthSeconds: number;
+  shortDescription?: string;
+  thumbnail?: string;
+  formats: YtStreamFormat[];
+  adaptiveFormats: YtStreamFormat[];
+  hlsManifestUrl?: string;
+  playabilityStatus?: string;
+}
+
+export async function ytInnerTubePlayer(videoId: string): Promise<YtPlayerData> {
+  // Try server proxy first
+  try {
+    const res = await fetch(`/api/youtubei/player?id=${encodeURIComponent(videoId)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && (data.formats?.length || data.adaptiveFormats?.length || data.hlsManifestUrl || data.title)) {
+        return data as YtPlayerData;
+      }
+    }
+  } catch {
+    // fallback to direct InnerTube request
+  }
+
+  // Direct client request to InnerTube Player endpoint with user key
+  const r = await fetch(YOUTUBE_INNERTUBE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      context: {
+        client: {
+          clientName: "ANDROID_VR",
+          clientVersion: "1.60.19",
+          hl: "en",
+          gl: "US",
+        },
+      },
+      videoId,
+    }),
+  });
+  const d = await r.json();
+  const v = d.videoDetails || {};
+  return {
+    videoId,
+    title: decode(v.title || "YouTube ভিডিও"),
+    author: decode(v.author || ""),
+    lengthSeconds: Number(v.lengthSeconds || 0),
+    shortDescription: decode(v.shortDescription || ""),
+    thumbnail: v.thumbnail?.thumbnails?.slice(-1)[0]?.url || "",
+    formats: d.streamingData?.formats || [],
+    adaptiveFormats: d.streamingData?.adaptiveFormats || [],
+    hlsManifestUrl: d.streamingData?.hlsManifestUrl,
+    playabilityStatus: d.playabilityStatus?.status || "OK",
+  };
 }
