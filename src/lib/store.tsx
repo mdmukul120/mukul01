@@ -55,6 +55,8 @@ interface Ctx {
   toggleFavCh: (name: string) => void;
   toast: (m: string) => void;
   toastMsg: string;
+  theme: "dark" | "light";
+  toggleTheme: () => void;
 }
 
 const C = createContext<Ctx>(null as unknown as Ctx);
@@ -111,59 +113,153 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toastTimer.current = window.setTimeout(() => setToastMsg(""), 2600);
   }, []);
 
-  // ── history-based back button handling ──
-  const layers = useRef<string[]>([]);
-  const reqOpen = useRef(false);
-  reqOpen.current = !!req;
-  const fullRef = useRef(false);
-  fullRef.current = fullOpen;
-
-  const pushLayer = (n: string) => {
-    layers.current.push(n);
+  // ── Theme Management ──
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
     try {
-      history.pushState({ l: n }, "");
+      const saved = localStorage.getItem("mukul_theme");
+      if (saved === "light" || saved === "dark") return saved;
     } catch {
       /* ignore */
     }
-  };
+    return "dark";
+  });
 
   useEffect(() => {
-    const h = () => {
-      const top = layers.current.pop();
-      if (top === "player") setReq(null);
-      else if (top === "full") setFull(false);
-      else if (top === "detail") setDetails((d) => d.slice(0, -1));
-    };
-    window.addEventListener("popstate", h);
-    return () => window.removeEventListener("popstate", h);
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem("mukul_theme", theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
+
+  // ── history-based back button handling ──
+  const reqRef = useRef<PlayRequest | null>(null);
+  reqRef.current = req;
+  const detailsRef = useRef<Detail[]>([]);
+  detailsRef.current = details;
+  const fullRef = useRef(false);
+  fullRef.current = fullOpen;
+  const tabRef = useRef<Tab>("home");
+  tabRef.current = tab;
+  const lastBack = useRef(0);
+
+  // Keep browser history seeded so back button does not exit the app abruptly
+  useEffect(() => {
+    try {
+      if (!history.state || !history.state.mukul) {
+        history.replaceState({ mukul: true, level: 0 }, "");
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const onBack = (e: Event) => {
+      e.preventDefault?.();
+      // 1. If video player is open -> close it
+      if (reqRef.current) {
+        setReq(null);
+        try {
+          history.pushState({ mukul: true }, "");
+        } catch {}
+        return;
+      }
+      // 2. If details modal is open -> close the top-most detail
+      if (detailsRef.current.length > 0) {
+        setDetails((d) => d.slice(0, -1));
+        try {
+          history.pushState({ mukul: true }, "");
+        } catch {}
+        return;
+      }
+      // 3. If full music player is open -> minimize it
+      if (fullRef.current) {
+        setFull(false);
+        try {
+          history.pushState({ mukul: true }, "");
+        } catch {}
+        return;
+      }
+      // 4. If not on home tab -> return to home tab
+      if (tabRef.current !== "home") {
+        setTab("home");
+        try {
+          history.pushState({ mukul: true }, "");
+        } catch {}
+        return;
+      }
+      // 5. On home tab: require double press to exit
+      const now = Date.now();
+      if (now - lastBack.current < 2200) {
+        // user pressed twice within 2.2s, allow default exit
+        return;
+      }
+      lastBack.current = now;
+      toast("অ্যাপ থেকে বের হতে আবার ব্যাক চাপুন");
+      try {
+        history.pushState({ mukul: true }, "");
+      } catch {}
+    };
+
+    window.addEventListener("popstate", onBack);
+    document.addEventListener("backbutton", onBack as any);
+
+    let capHandle: any = null;
+    try {
+      import("@capacitor/app")
+        .then(({ App: CapApp }) => {
+          CapApp.addListener("backButton", () => {
+            onBack({ preventDefault: () => {} } as any);
+          }).then((h) => {
+            capHandle = h;
+          });
+        })
+        .catch(() => {});
+    } catch {}
+
+    return () => {
+      window.removeEventListener("popstate", onBack);
+      document.removeEventListener("backbutton", onBack as any);
+      capHandle?.remove?.();
+    };
+  }, [toast]);
 
   const play = useCallback((r: PlayRequest) => {
     audioRef.current?.pause();
-    if (!reqOpen.current) pushLayer("player");
+    try {
+      history.pushState({ mukul: true, type: "video" }, "");
+    } catch {}
     setReq(r);
   }, []);
+
   const closePlayer = useCallback(() => {
-    if (layers.current.includes("player")) history.back();
-    else setReq(null);
+    setReq(null);
   }, []);
+
   const openDetail = useCallback((d: Detail) => {
-    pushLayer("detail");
+    try {
+      history.pushState({ mukul: true, type: "detail" }, "");
+    } catch {}
     setDetails((s) => [...s, d]);
   }, []);
+
   const closeDetail = useCallback(() => {
-    if (layers.current.includes("detail")) history.back();
-    else setDetails((d) => d.slice(0, -1));
+    setDetails((d) => d.slice(0, -1));
   }, []);
+
   const openFull = useCallback(() => {
-    if (!fullRef.current) {
-      pushLayer("full");
-      setFull(true);
-    }
+    try {
+      history.pushState({ mukul: true, type: "full" }, "");
+    } catch {}
+    setFull(true);
   }, []);
+
   const closeFull = useCallback(() => {
-    if (layers.current.includes("full")) history.back();
-    else setFull(false);
+    setFull(false);
   }, []);
 
   // ── audio engine ──
@@ -293,8 +389,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toggleFavCh,
       toast,
       toastMsg,
+      theme,
+      toggleTheme,
     }),
-    [tab, req, details, queue, index, playing, progress, duration, fullOpen, quality, liked, favCh, toastMsg, play, closePlayer, openDetail, closeDetail, playQueue, toggle, next, prev, seek, openFull, closeFull, setQuality, toggleLike, toggleFavCh, toast]
+    [tab, req, details, queue, index, playing, progress, duration, fullOpen, quality, liked, favCh, toastMsg, theme, toggleTheme, play, closePlayer, openDetail, closeDetail, playQueue, toggle, next, prev, seek, openFull, closeFull, setQuality, toggleLike, toggleFavCh, toast]
   );
 
   return <C.Provider value={value}>{children}</C.Provider>;

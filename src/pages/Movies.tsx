@@ -7,9 +7,6 @@ import {
   ctgSearch,
   ctgTitle,
   fetchMovieCatalog,
-  ottCategories,
-  ottList,
-  ottSearch,
   type CatalogMovie,
 } from "../lib/api";
 import { useApp } from "../lib/store";
@@ -66,28 +63,27 @@ function usePaged<T>(fetchPage: (p: number) => Promise<T[]>, key: string, idOf: 
   return { items, loading, error, done, load };
 }
 
-type Src = "ott" | "catalog" | "ctg" | "bongo";
+type Src = "catalog" | "ctg" | "bongo";
 
 export default function Movies() {
-  const [src, setSrc] = useState<Src>("ott");
+  const [src, setSrc] = useState<Src>("catalog");
   return (
     <div className="pb-6">
-      <PageHeader title="মুভি ও সিরিজ" subtitle="সিনেমা, নাটক, ওয়েব সিরিজ" />
+      <PageHeader title="মুভি ও সিরিজ" subtitle="ক্যাটালগ, মুকুল মুভি ও নাটক" />
       <div className="px-5 pt-1">
-        <div className="grid grid-cols-4 card-edge rounded-full bg-surface p-1.5 gap-1">
+        <div className="grid grid-cols-3 card-edge rounded-full bg-surface p-1.5 gap-1">
           {(
             [
-              ["ott", "Mukul Plus"],
-              ["catalog", "ক্যাটালগ"],
-              ["ctg", "CTGHall"],
-              ["bongo", "Bongo"],
+              ["catalog", "ক্যাটালগ মুভি"],
+              ["ctg", "মুকুল মুভি"],
+              ["bongo", "বঙ্গ মুভি"],
             ] as [Src, string][]
           ).map(([id, label]) => (
             <button
               key={id}
               onClick={() => setSrc(id)}
               className={cn(
-                "rounded-full py-2 text-[11px] sm:text-[13px] font-bold transition text-center truncate px-1",
+                "rounded-full py-2 text-[12px] sm:text-[13px] font-bold transition text-center truncate px-2",
                 src === id ? "glow-soft bg-neon text-ink" : "text-mute"
               )}
             >
@@ -97,7 +93,6 @@ export default function Movies() {
         </div>
       </div>
       <div className="mt-3">
-        {src === "ott" && <OttBrowse />}
         {src === "catalog" && <CatalogBrowse />}
         {src === "ctg" && <CtgBrowse />}
         {src === "bongo" && <BongoBrowse />}
@@ -106,142 +101,19 @@ export default function Movies() {
   );
 }
 
-function OttBrowse() {
-  const { openDetail } = useApp();
-  const [cat, setCat] = useState("");
-  const [input, setInput] = useState("");
-  const [query, setQuery] = useState("");
-  const { data: cats } = useAsync(ottCategories, []);
-
-  const { items, loading, error, done, load } = usePaged(
-    (p) => (query ? (p === 1 ? ottSearch(query) : Promise.resolve([])) : ottList(p, cat || undefined)),
-    `${cat}|${query}`,
-    (x) => x.slug
-  );
-
-  useEffect(() => {
-    if (!input) setQuery("");
-  }, [input]);
-
-  return (
-    <>
-      <SearchBar value={input} onChange={setInput} onSubmit={() => setQuery(input.trim())} placeholder="মুভি, সিরিজ বা নাটক খুঁজুন…" />
-      {!query && (
-        <Chips
-          value={cat}
-          onChange={setCat}
-          items={[{ id: "", label: "সব" }, ...(cats || []).map((c) => ({ id: c.slug, label: c.bnName && /[\u0980-\u09FF]/.test(c.bnName) ? c.bnName : c.name }))]}
-        />
-      )}
-      {query && <p className="px-5 pt-3 text-xs text-mute">“{query}” এর ফলাফল</p>}
-      <div className="mt-2">
-        {items.length === 0 && loading && <Skeletons />}
-        {error && <ErrorState message={error} onRetry={load} />}
-        {!loading && !error && items.length === 0 && <p className="py-16 text-center text-sm text-mute">কিছু পাওয়া যায়নি</p>}
-        <Grid>
-          {items.map((m) => (
-            <PosterCard
-              key={m.slug}
-              image={m.poster}
-              title={m.title}
-              badge={m.kind === "movie" ? m.quality_tag || m.language : m.quality_tag?.slice(0, 22) || m.kind}
-              sub={[m.year, m.language].filter(Boolean).join(" • ")}
-              onClick={() => openDetail({ t: "ott", slug: m.slug })}
-            />
-          ))}
-        </Grid>
-        {items.length > 0 && loading && <Loading />}
-        {!done && !error && items.length > 0 && !query && <Sentinel onVisible={load} disabled={loading} />}
-      </div>
-    </>
-  );
-}
-
-function CtgBrowse() {
-  const { openDetail } = useApp();
-  const [lib, setLib] = useState(1);
-  const [input, setInput] = useState("");
-  const [query, setQuery] = useState("");
-  const { items, loading, error, done, load } = usePaged(
-    async (p) => {
-      if (query) return p === 1 ? await ctgSearch(query) : [];
-      return (await ctgList(lib, p)).data;
-    },
-    `${lib}|${query}`,
-    (x) => x.id
-  );
-  useEffect(() => {
-    if (!input) setQuery("");
-  }, [input]);
-  return (
-    <>
-      <SearchBar value={input} onChange={setInput} onSubmit={() => setQuery(input.trim())} placeholder="CTGHall-এ মুভি খুঁজুন…" />
-      {!query && <Chips value={lib} onChange={setLib} items={CTG_LIBS.map((l) => ({ id: l.id, label: l.name }))} />}
-      <div className="mt-2">
-        {items.length === 0 && loading && <Skeletons />}
-        {error && <ErrorState message={error} onRetry={load} />}
-        {!loading && !error && items.length === 0 && <p className="py-16 text-center text-sm text-mute">কিছু পাওয়া যায়নি</p>}
-        <Grid>
-          {items.map((m) => (
-            <PosterCard
-              key={m.id}
-              image={ctgImg(m.poster_path)}
-              title={ctgTitle(m.title)}
-              sub={m.year ? String(m.year) : m.Library?.name}
-              rating={m.online_rating}
-              onClick={() => openDetail({ t: "ctg", id: m.id })}
-            />
-          ))}
-        </Grid>
-        {items.length > 0 && loading && <Loading />}
-        {!done && !error && items.length > 0 && !query && <Sentinel onVisible={load} disabled={loading} />}
-      </div>
-    </>
-  );
-}
-
-function BongoBrowse() {
-  const { openDetail } = useApp();
-  const { data, error, loading, reload } = useAsync(bongoScrape, []);
-  const [cat, setCat] = useState("all");
-  const [q, setQ] = useState("");
-  const [limit, setLimit] = useState(60);
-
-  const items = useMemo(() => {
-    if (!data) return [];
-    const all = cat === "all" ? data.flatMap((c) => c.items) : data.find((c) => c.key === cat)?.items || [];
-    const seen = new Set<string>();
-    const uniq = all.filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)));
-    const s = q.trim().toLowerCase();
-    return s ? uniq.filter((i) => i.title.toLowerCase().includes(s)) : uniq;
-  }, [data, cat, q]);
-
-  useEffect(() => setLimit(60), [cat, q]);
-
-  return (
-    <>
-      <SearchBar value={q} onChange={setQ} placeholder="Bongo কনটেন্ট খুঁজুন…" />
-      {data && <Chips value={cat} onChange={setCat} items={[{ id: "all", label: "সব" }, ...data.map((c) => ({ id: c.key, label: c.title.split("·")[0].trim(), count: c.items.length }))]} />}
-      <div className="mt-2">
-        {loading && <Skeletons />}
-        {error && <ErrorState message={error} onRetry={reload} />}
-        <Grid>
-          {items.slice(0, limit).map((m) => (
-            <PosterCard
-              key={m.id}
-              image={m.thumbnail}
-              title={m.title}
-              badge={m.category}
-              premium={m.premium}
-              onClick={() => openDetail({ t: "bongo", item: m })}
-            />
-          ))}
-        </Grid>
-        {items.length > limit && <Sentinel onVisible={() => setLimit((l) => l + 60)} />}
-      </div>
-    </>
-  );
-}
+const CATALOG_SUGGESTIONS = [
+  "জনপ্রিয়",
+  "Godzilla",
+  "Ramayana",
+  "Avatar",
+  "Spider-Man",
+  "অ্যাকশন",
+  "হলিউড",
+  "সিরিজ",
+  "অ্যানিমেশন",
+  "কমেডি",
+  "হরর",
+];
 
 function CatalogBrowse() {
   const { openDetail } = useApp();
@@ -295,6 +167,8 @@ function CatalogBrowse() {
         value={query}
         onChange={setQuery}
         placeholder="ক্যাটালগ থেকে মুভি বা সিরিজ খুঁজুন…"
+        suggestions={CATALOG_SUGGESTIONS}
+        onSelectSuggestion={(s) => setQuery(s === "জনপ্রিয়" ? "" : s)}
       />
       {cats && (
         <Chips
@@ -338,6 +212,126 @@ function CatalogBrowse() {
         {allMovies.length > limit && (
           <Sentinel onVisible={() => setLimit((l) => l + 30)} />
         )}
+      </div>
+    </>
+  );
+}
+
+const MUKUL_MOVIE_SUGGESTIONS = [
+  "জনপ্রিয়",
+  "Godzilla",
+  "Ramayana",
+  "বাংলা মুভি",
+  "অ্যাকশন",
+  "বলিউড",
+  "হলিউড",
+  "সিরিজ",
+  "অ্যানিমেশন",
+  "কমেডি",
+  "হরর",
+];
+
+function CtgBrowse() {
+  const { openDetail } = useApp();
+  const [lib, setLib] = useState(1);
+  const [input, setInput] = useState("");
+  const [query, setQuery] = useState("");
+  const { items, loading, error, done, load } = usePaged(
+    async (p) => {
+      if (query) return p === 1 ? await ctgSearch(query) : [];
+      return (await ctgList(lib, p)).data;
+    },
+    `${lib}|${query}`,
+    (x) => x.id
+  );
+  useEffect(() => {
+    if (!input) setQuery("");
+  }, [input]);
+
+  return (
+    <>
+      <SearchBar
+        value={input}
+        onChange={setInput}
+        onSubmit={() => setQuery(input.trim())}
+        placeholder="মুকুল মুভিতে খুঁজুন…"
+        suggestions={MUKUL_MOVIE_SUGGESTIONS}
+        onSelectSuggestion={(s) => {
+          const val = s === "জনপ্রিয়" ? "" : s;
+          setInput(val);
+          setQuery(val);
+        }}
+      />
+      {!query && <Chips value={lib} onChange={setLib} items={CTG_LIBS.map((l) => ({ id: l.id, label: l.name }))} />}
+      <div className="mt-2">
+        {items.length === 0 && loading && <Skeletons />}
+        {error && <ErrorState message={error} onRetry={load} />}
+        {!loading && !error && items.length === 0 && <p className="py-16 text-center text-sm text-mute">কিছু পাওয়া যায়নি</p>}
+        <Grid>
+          {items.map((m) => (
+            <PosterCard
+              key={m.id}
+              image={ctgImg(m.poster_path)}
+              title={ctgTitle(m.title)}
+              sub={m.year ? String(m.year) : m.Library?.name}
+              rating={m.online_rating}
+              onClick={() => openDetail({ t: "ctg", id: m.id })}
+            />
+          ))}
+        </Grid>
+        {items.length > 0 && loading && <Loading />}
+        {!done && !error && items.length > 0 && !query && <Sentinel onVisible={load} disabled={loading} />}
+      </div>
+    </>
+  );
+}
+
+const BONGO_SUGGESTIONS = ["হিট", "নাটক", "সিরিজ", "রোমান্টিক", "কমেডি", "থ্রিলার"];
+
+function BongoBrowse() {
+  const { openDetail } = useApp();
+  const { data, error, loading, reload } = useAsync(bongoScrape, []);
+  const [cat, setCat] = useState("all");
+  const [q, setQ] = useState("");
+  const [limit, setLimit] = useState(60);
+
+  const items = useMemo(() => {
+    if (!data) return [];
+    const all = cat === "all" ? data.flatMap((c) => c.items) : data.find((c) => c.key === cat)?.items || [];
+    const seen = new Set<string>();
+    const uniq = all.filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)));
+    const s = q.trim().toLowerCase();
+    return s ? uniq.filter((i) => i.title.toLowerCase().includes(s)) : uniq;
+  }, [data, cat, q]);
+
+  useEffect(() => setLimit(60), [cat, q]);
+
+  return (
+    <>
+      <SearchBar
+        value={q}
+        onChange={setQ}
+        placeholder="বঙ্গ কনটেন্ট খুঁজুন…"
+        suggestions={BONGO_SUGGESTIONS}
+        onSelectSuggestion={(s) => setQ(s === "হিট" ? "" : s)}
+      />
+      {data && <Chips value={cat} onChange={setCat} items={[{ id: "all", label: "সব" }, ...data.map((c) => ({ id: c.key, label: c.title.split("·")[0].trim(), count: c.items.length }))]} />}
+      <div className="mt-2">
+        {loading && <Skeletons />}
+        {error && <ErrorState message={error} onRetry={reload} />}
+        <Grid>
+          {items.slice(0, limit).map((m) => (
+            <PosterCard
+              key={m.id}
+              image={m.thumbnail}
+              title={m.title}
+              badge={m.category}
+              premium={m.premium}
+              onClick={() => openDetail({ t: "bongo", item: m })}
+            />
+          ))}
+        </Grid>
+        {items.length > limit && <Sentinel onVisible={() => setLimit((l) => l + 60)} />}
       </div>
     </>
   );

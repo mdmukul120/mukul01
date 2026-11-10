@@ -115,6 +115,18 @@ function SearchResults({ q }: { q: string }) {
   );
 }
 
+const MUSIC_SUGGESTIONS = [
+  "Arijit Singh",
+  "Shreya Ghoshal",
+  "Anupam Roy",
+  "বাংলা গান",
+  "হিন্দি হিটস",
+  "Lofi chill",
+  "রোমান্টিক",
+  "পাঞ্জাবি",
+  "রক গান",
+];
+
 export default function Music() {
   const { liked } = useApp();
   const [tab, setTab] = useState<"explore" | "liked">("explore");
@@ -131,6 +143,11 @@ export default function Music() {
         }}
         onSubmit={() => setQ(input.trim())}
         placeholder="গান, শিল্পী বা অ্যালবাম খুঁজুন…"
+        suggestions={MUSIC_SUGGESTIONS}
+        onSelectSuggestion={(s) => {
+          setInput(s);
+          setQ(s);
+        }}
       />
       {q ? (
         <SearchResults q={q} />

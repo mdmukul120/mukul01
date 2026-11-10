@@ -37,8 +37,16 @@ import { cn } from "../utils/cn";
 function Shell({ children, onBack, hero }: { children: ReactNode; onBack: () => void; hero?: string }) {
   return (
     <div className="app-bg absolute inset-0 z-[55] overflow-y-auto animate-[slideUp_.25s_ease]">
-      <div className="sticky top-0 z-20 h-0">
-        <button onClick={onBack} className="card-edge absolute left-4 top-4 grid h-11 w-11 place-items-center rounded-full bg-ink/70 backdrop-blur active:scale-90">
+      <div className="sticky top-0 z-30 h-0">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onBack();
+          }}
+          className="card-edge absolute left-4 top-4 z-40 grid h-11 w-11 place-items-center rounded-full bg-ink/80 text-white backdrop-blur active:scale-90 hover:bg-ink shadow-lg pointer-events-auto cursor-pointer"
+          aria-label="Back"
+        >
           <ArrowLeft className="h-5 w-5" />
         </button>
       </div>

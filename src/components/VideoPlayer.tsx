@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
-import { Copy, Download, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Copy, Download, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
 import { useApp } from "../lib/store";
 import { isHlsUrl, isMkvUrl, streamUrl, type PlaySource } from "../lib/api";
 import { cn } from "../utils/cn";
@@ -266,6 +266,16 @@ export default function VideoPlayer() {
           controls={native}
           onContextMenu={(e) => e.preventDefault()}
         />
+        {native && (
+          <button
+            type="button"
+            onClick={closePlayer}
+            className="absolute left-3 top-3 z-30 grid h-10 w-10 place-items-center rounded-full bg-black/75 text-white shadow-lg backdrop-blur active:scale-90 hover:bg-black"
+            aria-label="Back"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+        )}
         {status !== "error" && !native && (
           <Chrome
             title={req.title}

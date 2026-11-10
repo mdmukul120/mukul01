@@ -74,9 +74,29 @@ function TV() {
     });
   };
 
+const TV_SUGGESTIONS = [
+  "Somoy",
+  "Jamuna",
+  "Channel i",
+  "Ekushey",
+  "T Sports",
+  "Gazi",
+  "ATN",
+  "NTV",
+  "BTV",
+  "News",
+  "Sports",
+];
+
   return (
     <>
-      <SearchBar value={q} onChange={setQ} placeholder={`${data ? data.length : ""} চ্যানেল থেকে খুঁজুন…`} />
+      <SearchBar
+        value={q}
+        onChange={setQ}
+        placeholder={`${data ? data.length : ""} চ্যানেল থেকে খুঁজুন…`}
+        suggestions={TV_SUGGESTIONS}
+        onSelectSuggestion={(s) => setQ(s)}
+      />
       <Chips
         value={group}
         onChange={setGroup}

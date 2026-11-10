@@ -141,40 +141,72 @@ export function Chrome(p: ChromeProps) {
         <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-transparent to-black/80" />
 
         {/* top bar */}
-        <div className={cn("absolute inset-x-0 top-0 flex items-center gap-3 px-3 pt-3", visible && "pointer-events-auto")}>
-          <button onClick={p.onBack} className="grid h-10 w-10 place-items-center rounded-full bg-black/45 backdrop-blur active:scale-90">
-            <ArrowLeft className="h-5 w-5" />
+        <div className={cn("absolute inset-x-0 top-0 z-30 flex items-center gap-3 px-3 pt-3", visible ? "pointer-events-auto" : "pointer-events-none")}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              p.onBack();
+            }}
+            className="grid h-10 w-10 place-items-center rounded-full bg-black/60 backdrop-blur active:scale-90 hover:bg-black/80 pointer-events-auto cursor-pointer"
+            aria-label="Back"
+          >
+            <ArrowLeft className="h-5 w-5 text-white" />
           </button>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-bold">{p.title}</p>
-            {p.subtitle && <p className="truncate text-[11px] text-white/60">{p.subtitle}</p>}
+            <p className="truncate text-[13px] font-bold text-white">{p.title}</p>
+            {p.subtitle && <p className="truncate text-[11px] text-white/70">{p.subtitle}</p>}
           </div>
           {p.live && (
-            <span className="flex items-center gap-1.5 rounded-full bg-live px-2.5 py-1 text-[10px] font-extrabold tracking-wider">
+            <span className="flex items-center gap-1.5 rounded-full bg-live px-2.5 py-1 text-[10px] font-extrabold tracking-wider text-white">
               <span className="h-1.5 w-1.5 rounded-full bg-white" /> LIVE
             </span>
           )}
         </div>
 
         {/* center */}
-        <div className={cn("absolute inset-0 flex items-center justify-center gap-8", visible && "pointer-events-auto")}>
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-8">
           {canSeek && (
-            <button onClick={() => skip(-10)} className="grid h-11 w-11 place-items-center rounded-full bg-black/45 backdrop-blur active:scale-90">
-              <RotateCcw className="h-5 w-5" />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                skip(-10);
+              }}
+              className={cn("grid h-11 w-11 place-items-center rounded-full bg-black/55 backdrop-blur active:scale-90 cursor-pointer", visible ? "pointer-events-auto" : "pointer-events-none opacity-0")}
+              aria-label="Rewind 10 seconds"
+            >
+              <RotateCcw className="h-5 w-5 text-white" />
             </button>
           )}
-          <button onClick={p.onToggle} className="glow-soft grid h-16 w-16 place-items-center rounded-full bg-neon text-ink active:scale-90">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              p.onToggle();
+            }}
+            className={cn("glow-soft grid h-16 w-16 place-items-center rounded-full bg-neon text-ink active:scale-90 cursor-pointer", visible ? "pointer-events-auto" : "pointer-events-none opacity-0")}
+            aria-label={p.playing ? "Pause" : "Play"}
+          >
             {p.loading ? <Spinner className="h-7 w-7 !text-ink" /> : p.playing ? <Pause className="h-7 w-7 fill-ink" /> : <Play className="ml-0.5 h-7 w-7 fill-ink" />}
           </button>
           {canSeek && (
-            <button onClick={() => skip(10)} className="grid h-11 w-11 place-items-center rounded-full bg-black/45 backdrop-blur active:scale-90">
-              <RotateCw className="h-5 w-5" />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                skip(10);
+              }}
+              className={cn("grid h-11 w-11 place-items-center rounded-full bg-black/55 backdrop-blur active:scale-90 cursor-pointer", visible ? "pointer-events-auto" : "pointer-events-none opacity-0")}
+              aria-label="Forward 10 seconds"
+            >
+              <RotateCw className="h-5 w-5 text-white" />
             </button>
           )}
         </div>
 
         {/* bottom */}
-        <div className={cn("absolute inset-x-0 bottom-0 px-4 pb-3", visible && "pointer-events-auto")}>
+        <div className={cn("absolute inset-x-0 bottom-0 z-30 px-4 pb-3", visible ? "pointer-events-auto" : "pointer-events-none")}>
           <div className="flex items-center gap-3">
             <span className="w-11 text-[11px] font-semibold tabular-nums">{p.live ? "LIVE" : fmtTime(p.cur)}</span>
             <input

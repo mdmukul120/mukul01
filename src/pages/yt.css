@@ -91,7 +91,8 @@
 .yt-holder iframe{width:100%;height:100%;border:0;display:block}
 .yt-cover{position:absolute;inset:0;z-index:5;background:transparent}
 .yt-bright{position:absolute;inset:0;pointer-events:none;z-index:4}
-.yt-back{position:absolute;top:8px;left:8px;z-index:12;width:34px;height:34px;border-radius:50%;border:0;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .3s}
+.yt-back{position:absolute;top:10px;left:10px;z-index:50;width:38px;height:38px;border-radius:50%;border:0;background:rgba(0,0,0,.7);color:#fff;display:grid;place-items:center;cursor:pointer;opacity:1 !important;pointer-events:auto !important;box-shadow:0 4px 14px rgba(0,0,0,.6);backdrop-filter:blur(6px);transition:transform .2s}
+.yt-back:active{transform:scale(.9)}
 .yt-vbox.ctl .yt-back{opacity:1}
 .yt-center{position:absolute;inset:0;z-index:8;display:grid;place-items:center;pointer-events:none;opacity:0;transition:opacity .3s}
 .yt-vbox.ctl .yt-center{opacity:1}

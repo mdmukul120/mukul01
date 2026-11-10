@@ -91,35 +91,60 @@ export function SearchBar({
   onChange,
   onSubmit,
   placeholder,
+  suggestions,
+  onSelectSuggestion,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSubmit?: () => void;
   placeholder?: string;
+  suggestions?: string[];
+  onSelectSuggestion?: (s: string) => void;
 }) {
   return (
-    <form
-      className="card-edge mx-5 flex items-center gap-2 rounded-full bg-surface px-4 py-3 focus-within:shadow-[inset_0_0_0_1.5px_var(--color-neon)]"
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit?.();
-        (document.activeElement as HTMLElement | null)?.blur();
-      }}
-    >
-      <Search className="h-4 w-4 shrink-0 text-neon" />
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        enterKeyHint="search"
-        className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-mute"
-      />
-      {value && (
-        <button type="button" onClick={() => onChange("")} className="text-mute">
-          <X className="h-4 w-4" />
-        </button>
+    <div className="mx-5 space-y-2">
+      <form
+        className="card-edge flex items-center gap-2 rounded-full bg-surface px-4 py-3 focus-within:shadow-[inset_0_0_0_1.5px_var(--color-neon)]"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit?.();
+          (document.activeElement as HTMLElement | null)?.blur();
+        }}
+      >
+        <Search className="h-4 w-4 shrink-0 text-neon" />
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          enterKeyHint="search"
+          className="min-w-0 flex-1 bg-transparent text-sm text-[var(--color-text,#eef7f0)] outline-none placeholder:text-mute"
+        />
+        {value && (
+          <button type="button" onClick={() => onChange("")} className="text-mute p-1">
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </form>
+      {suggestions && suggestions.length > 0 && (
+        <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-1 py-0.5 text-xs">
+          <span className="shrink-0 text-[10px] font-bold text-neon uppercase tracking-wider">সাজেশন:</span>
+          {suggestions.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => {
+                onChange(s);
+                if (onSelectSuggestion) onSelectSuggestion(s);
+                else onSubmit?.();
+              }}
+              className="card-edge shrink-0 rounded-full bg-surface2 px-2.5 py-1 text-[11px] font-semibold text-mute hover:text-neon hover:border-neon transition active:scale-95"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       )}
-    </form>
+    </div>
   );
 }
 
