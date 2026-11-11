@@ -269,9 +269,17 @@ export default function VideoPlayer() {
         {native && (
           <button
             type="button"
-            onClick={closePlayer}
-            className="absolute left-3 top-3 z-30 grid h-10 w-10 place-items-center rounded-full bg-black/75 text-white shadow-lg backdrop-blur active:scale-90 hover:bg-black"
-            aria-label="Back"
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              closePlayer();
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closePlayer();
+            }}
+            aria-label="ফিরে যান"
+            className="absolute left-3 top-3 z-30 grid h-10 w-10 place-items-center rounded-full bg-black/75 text-white backdrop-blur shadow-lg active:scale-90 hover:bg-black"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>

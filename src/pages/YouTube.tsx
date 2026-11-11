@@ -84,58 +84,22 @@ function Thumb({ v }: { v: YtVideo }) {
   );
 }
 
-function Card({
-  v,
-  onOpen,
-  onDirectPlay,
-}: {
-  v: YtVideo;
-  onOpen: (v: YtVideo) => void;
-  onDirectPlay?: (v: YtVideo) => void;
-}) {
+function Card({ v, onOpen }: { v: YtVideo; onOpen: (v: YtVideo) => void }) {
   return (
-    <div className="yt-card group text-left">
-      <div className="relative">
-        <button
-          type="button"
-          className="w-full block text-left"
-          onClick={() => onOpen(v)}
-          aria-label={v.title}
-        >
-          <Thumb v={v} />
-        </button>
-        {onDirectPlay && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDirectPlay(v);
-            }}
-            title="ইনারটিউব ডিরেক্ট প্লেয়ার"
-            className="card-edge absolute left-2.5 top-2.5 z-10 flex items-center gap-1 rounded-full bg-black/80 px-2.5 py-1 text-[10.5px] font-bold text-neon shadow-lg backdrop-blur hover:bg-neon hover:text-ink active:scale-90 transition"
-          >
-            <Play size={11} fill="currentColor" /> ডিরেক্ট
-          </button>
-        )}
-      </div>
-      <button
-        type="button"
-        className="yt-meta w-full block text-left cursor-pointer"
-        onClick={() => onOpen(v)}
-      >
-        <div className="flex gap-2.5">
-          <div className="yt-ava shrink-0">{initial(v.channel)}</div>
-          <div className="yt-txt min-w-0">
-            <div className="yt-title clamp2">{v.title}</div>
-            <div className="yt-sub">
-              {v.channel}
-              {statLine(v) ? <br /> : null}
-              {statLine(v)}
-            </div>
+    <button className="yt-card" onClick={() => onOpen(v)} aria-label={v.title}>
+      <Thumb v={v} />
+      <div className="yt-meta">
+        <div className="yt-ava">{initial(v.channel)}</div>
+        <div className="yt-txt">
+          <div className="yt-title clamp2">{v.title}</div>
+          <div className="yt-sub">
+            {v.channel}
+            {statLine(v) ? <br /> : null}
+            {statLine(v)}
           </div>
         </div>
-      </button>
-    </div>
+      </div>
+    </button>
   );
 }
 
@@ -428,6 +392,11 @@ function Player({ video, related, active, onBack, onOpen }: { video: YtVideo; re
           <button
             type="button"
             className="yt-back"
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              onBack();
+            }}
             onClick={(e) => {
               e.stopPropagation();
               onBack();
@@ -669,20 +638,9 @@ function Player({ video, related, active, onBack, onOpen }: { video: YtVideo; re
   );
 }
 
-const YT_SEARCH_SUGGESTIONS = [
-  "বাংলা নাটক",
-  "নতুন বাংলা গান",
-  "লাইভ খবর",
-  "Cricket highlights",
-  "বাংলা মুভি",
-  "কমেডি ভিডিও",
-  "রান্নার রেসিপি",
-  "ইসলামিক ওয়াজ",
-];
-
 /* ───────────────────────── home / browse page ───────────────────────── */
 export default function YouTube() {
-  const { tab, play, toast } = useApp();
+  const { tab, ytWatch, setYtWatch } = useApp();
   const root = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const [cat, setCat] = useState("all");
@@ -692,44 +650,11 @@ export default function YouTube() {
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<YtVideo | null>(null);
+  const open = ytWatch;
   const gen = useRef(0);
   const busy = useRef(false);
 
   const query = useMemo(() => q || CATS.find((c) => c[0] === cat)?.[2] || "", [q, cat]);
-
-  const directPlay = useCallback(
-    async (v: YtVideo) => {
-      toast("ইনারটিউব থেকে সরাসরি স্ট্রিম লোড হচ্ছে…");
-      try {
-        const data = await ytInnerTubePlayer(v.id);
-        const formats = data.formats || [];
-        const sources = formats
-          .filter((f) => f.url)
-          .map((f, i) => ({
-            label: f.qualityLabel || f.quality || `ফরম্যাট ${i + 1}`,
-            url: f.url!,
-            hls: false,
-          }));
-        if (data.hlsManifestUrl) {
-          sources.unshift({ label: "HLS লাইভ স্ট্রিম", url: data.hlsManifestUrl, hls: true });
-        }
-        if (sources.length > 0) {
-          play({
-            title: data.title || v.title,
-            subtitle: data.author || v.channel,
-            poster: data.thumbnail || v.thumb,
-            sources,
-          });
-          return;
-        }
-        toast("সরাসরি স্ট্রিম পাওয়া যায়নি");
-      } catch {
-        toast("ইনারটিউব লোড ব্যর্থ");
-      }
-    },
-    [play, toast]
-  );
 
   const load = useCallback(
     async (token?: string) => {
@@ -780,11 +705,11 @@ export default function YouTube() {
 
   const scrollTop = () => root.current?.closest("main")?.scrollTo({ top: 0 });
   const show = (v: YtVideo) => {
-    setOpen(v);
+    setYtWatch(v);
     scrollTop();
   };
   const back = () => {
-    setOpen(null);
+    setYtWatch(null);
     scrollTop();
   };
 
@@ -852,23 +777,6 @@ export default function YouTube() {
                 </button>
               </form>
             </div>
-            <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3.5 pb-2 pt-0.5 text-xs">
-              <span className="shrink-0 text-[10px] font-bold text-neon uppercase tracking-wider">সাজেশন:</span>
-              {YT_SEARCH_SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => {
-                    setInput(s);
-                    setQ(s);
-                    scrollTop();
-                  }}
-                  className="shrink-0 rounded-full border border-line bg-surface2 px-2.5 py-1 text-[11px] font-semibold text-mute hover:text-neon hover:border-neon transition active:scale-95"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
             <div className="yt-chips">
               {CATS.map(([id, label]) => (
                 <button key={id} className={"yt-chip" + (!q && cat === id ? " on" : "")} onClick={() => pickCat(id)}>
@@ -889,7 +797,7 @@ export default function YouTube() {
 
           <div className="yt-grid">
             {items.map((v) => (
-              <Card key={v.id} v={v} onOpen={show} onDirectPlay={directPlay} />
+              <Card key={v.id} v={v} onOpen={show} />
             ))}
             {loading && <Skeletons n={items.length ? 3 : 6} />}
             {!loading && !error && items.length === 0 && <div className="yt-msg">কোনো ভিডিও পাওয়া যায়নি!</div>}

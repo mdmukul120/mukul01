@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { Clapperboard, Home as HomeIcon, Music2, PlayCircle, Trophy, Tv } from "lucide-react";
+import { Clapperboard, CloudSun, Home as HomeIcon, Moon, Music2, PlayCircle, Sun, Trophy, Tv } from "lucide-react";
 import { AppProvider, useApp, type Tab } from "./lib/store";
 import Home from "./pages/Home";
 import Movies from "./pages/Movies";
@@ -7,12 +7,13 @@ import Live from "./pages/Live";
 import Sports from "./pages/Sports";
 import Music from "./pages/Music";
 import YouTube from "./pages/YouTube";
+import Weather from "./pages/Weather";
 import Details from "./components/Details";
 import VideoPlayer from "./components/VideoPlayer";
 import { FullPlayer, MiniPlayer } from "./components/MusicPlayer";
 import { cn } from "./utils/cn";
 
-const ic = "h-[21px] w-[21px]";
+const ic = "h-[19px] w-[19px]";
 const NAV: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: "home", label: "হোম", icon: <HomeIcon className={ic} /> },
   { id: "movies", label: "মুভি", icon: <Clapperboard className={ic} /> },
@@ -20,10 +21,11 @@ const NAV: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: "live", label: "টিভি", icon: <Tv className={ic} /> },
   { id: "music", label: "মিউজিক", icon: <Music2 className={ic} /> },
   { id: "youtube", label: "ইউটিউব", icon: <PlayCircle className={ic} /> },
+  { id: "weather", label: "ওয়েদার", icon: <CloudSun className={ic} /> },
 ];
 
 function Shell() {
-  const { tab, setTab, toastMsg } = useApp();
+  const { tab, setTab, toastMsg, theme, toggleTheme } = useApp();
   const scroller = useRef<HTMLElement>(null);
   const visited = useRef<Set<Tab>>(new Set(["home"]));
   visited.current.add(tab);
@@ -39,10 +41,21 @@ function Shell() {
     live: <Live />,
     music: <Music />,
     youtube: <YouTube />,
+    weather: <Weather />,
   };
 
   return (
-    <div className="relative mx-auto flex h-dvh w-full max-w-[520px] flex-col sm:max-w-[700px] lg:max-w-[1040px] overflow-hidden app-bg text-white shadow-2xl shadow-black md:border-x md:border-line">
+    <div className="relative mx-auto flex h-dvh w-full max-w-[520px] flex-col sm:max-w-[700px] lg:max-w-[1040px] overflow-hidden app-bg shadow-2xl md:border-x md:border-line">
+      {/* Floating Theme Toggle Button */}
+      <button
+        onClick={toggleTheme}
+        title={theme === "dark" ? "লাইট থিমে পরিবর্তন করুন" : "ডার্ক থিমে পরিবর্তন করুন"}
+        aria-label="Theme toggle"
+        className="absolute right-3.5 top-3.5 z-40 grid h-9 w-9 place-items-center rounded-full bg-surface2/85 text-neon backdrop-blur card-edge active:scale-90 transition hover:bg-surface2"
+      >
+        {theme === "dark" ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-emerald-600" />}
+      </button>
+
       <main ref={scroller} className="relative z-0 flex-1 overflow-y-auto overscroll-contain">
         {(Object.keys(pages) as Tab[]).map((t) =>
           visited.current.has(t) ? (
@@ -55,13 +68,13 @@ function Shell() {
 
       <div className="relative z-30">
         <MiniPlayer />
-        <nav className="flex items-center justify-around border-t border-line bg-ink/95 px-1 pb-[max(env(safe-area-inset-bottom),6px)] pt-2 backdrop-blur-xl">
+        <nav className="flex items-center justify-around border-t border-line bg-surface/95 px-1 pb-[max(env(safe-area-inset-bottom),6px)] pt-1.5 backdrop-blur-xl">
           {NAV.map((n) => {
             const active = n.id === tab;
             return (
-              <button key={n.id} onClick={() => setTab(n.id)} className="flex w-[16%] flex-col items-center gap-1 py-0.5">
-                <span className={cn("grid h-8 w-12 place-items-center rounded-full transition-all duration-300", active ? "glow-soft bg-neon text-ink" : "text-mute")}>{n.icon}</span>
-                <span className={cn("text-[10px] font-semibold", active ? "text-neon" : "text-mute")}>{n.label}</span>
+              <button key={n.id} onClick={() => setTab(n.id)} className="flex flex-1 flex-col items-center gap-0.5 py-0.5 min-w-0">
+                <span className={cn("grid h-7 w-10 place-items-center rounded-full transition-all duration-300", active ? "glow-soft bg-neon text-ink" : "text-mute")}>{n.icon}</span>
+                <span className={cn("text-[9.5px] font-semibold truncate px-0.5", active ? "text-neon font-bold" : "text-mute")}>{n.label}</span>
               </button>
             );
           })}

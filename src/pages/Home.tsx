@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Moon, Play, Radio, Sun } from "lucide-react";
+import { Play, Radio } from "lucide-react";
 import { bongoScrape, ctgImg, ctgList, ctgTitle, fetchMovieCatalog, fmtStart, loadSports, musicPlaylists, type CatalogMovie, type SportMatch } from "../lib/api";
 import { useApp } from "../lib/store";
 import { makeSports } from "../lib/related";
@@ -103,7 +103,7 @@ function Hero({ items }: { items: HeroItem[] }) {
 }
 
 export default function Home() {
-  const { setTab, openDetail, play, toast, theme, toggleTheme } = useApp();
+  const { setTab, openDetail, play, toast } = useApp();
   const ctg = useAsync(() => ctgList(1, 1), []);
   const bongo = useAsync(bongoScrape, []);
   const pls = useAsync(() => musicPlaylists("Hindi top hits", 12), []);
@@ -132,20 +132,17 @@ export default function Home() {
         cta: "স্ট্রিমিং দেখুন",
         open: () => playMatch(m),
       }));
-
-    // Add top catalog movies to hero carousel
-    const catMovies = catalog.data ? catalog.data.flatMap((c) => c.movies).slice(0, 5) : [];
-    const b: HeroItem[] = catMovies.map((m) => ({
+    const catalogList = catalog.data ? catalog.data.flatMap((c) => c.movies) : [];
+    const b: HeroItem[] = catalogList.slice(0, 5).map((m: CatalogMovie) => ({
       key: "c" + m.kinopoisk_id,
       title: m.title_en || m.title_ru,
       img: m.poster,
       badge: m.type === "serial" ? "SERIES" : "MOVIE",
-      pill: m.ratings?.imdb?.rating ? `★ IMDB ${m.ratings.imdb.rating.toFixed(1)}` : "ক্যাটালগ",
-      desc: `${m.player.length}টি এইচডি সার্ভার • ক্যাটালগ মুভি`,
-      cta: "এখনই দেখুন",
+      pill: m.ratings?.imdb?.rating ? `★ ${m.ratings.imdb.rating.toFixed(1)}` : "ক্যাটালগ",
+      desc: `${m.player.length} টি সার্ভার • ${m.type === "serial" ? "ওয়েব সিরিজ" : "ফুল মুভি"}`,
+      cta: "দেখুন",
       open: () => openDetail({ t: "catalog", movie: m }),
     }));
-
     return [...a, ...b];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sports.data, catalog.data]);
@@ -161,19 +158,9 @@ export default function Home() {
             Mukul <span className="text-neon">Plus</span>
           </h1>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={toggleTheme}
-            className="card-edge flex h-9 w-9 items-center justify-center rounded-full bg-surface2 text-neon active:scale-90 transition"
-            title={theme === "dark" ? "লাইট মোড চালু করুন" : "ডার্ক মোড চালু করুন"}
-            aria-label="Theme Toggle"
-          >
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </button>
-          <button onClick={() => setTab("sports")} className="card-edge flex items-center gap-2 rounded-full bg-surface2 px-3.5 py-2 text-[11px] font-extrabold">
-            <Radio className="h-3.5 w-3.5 text-live" /> LIVE{live.length ? ` • ${live.length}` : ""}
-          </button>
-        </div>
+        <button onClick={() => setTab("sports")} className="card-edge flex items-center gap-2 rounded-full bg-surface2 px-3.5 py-2 text-[11px] font-extrabold">
+          <Radio className="h-3.5 w-3.5 text-live" /> LIVE{live.length ? ` • ${live.length}` : ""}
+        </button>
       </div>
 
       {heroItems.length > 0 ? (
@@ -214,9 +201,11 @@ export default function Home() {
         </Rail>
       )}
 
+
+
       {catalog.data && catalog.data.length > 0 && (
         <Rail title="ক্যাটালগ মুভি ও সিরিজ">
-          {(catalog.data[0]?.movies || []).slice(0, 16).map((m: CatalogMovie) => (
+          {(catalog.data[0]?.movies || []).slice(0, 15).map((m: CatalogMovie) => (
             <PosterCard
               key={m.kinopoisk_id}
               className="w-[118px] shrink-0 snap-start"
@@ -230,8 +219,19 @@ export default function Home() {
         </Rail>
       )}
 
+      {bongo.data && (
+        <Rail title="নাটক ও ওয়েব সিরিজ">
+          {bongo.data
+            .find((c) => c.key === "drama")
+            ?.items.slice(0, 14)
+            .map((m) => (
+              <PosterCard key={m.id} className="w-[118px] shrink-0 snap-start" image={m.thumbnail} title={m.title} premium={m.premium} onClick={() => openDetail({ t: "bongo", item: m })} />
+            ))}
+        </Rail>
+      )}
+
       {ctg.data && (
-        <Rail title="মুকুল মুভি (Mukul Movie)">
+        <Rail title="নতুন সংযোজন">
           {ctg.data.data.map((m) => (
             <PosterCard
               key={m.id}
@@ -243,17 +243,6 @@ export default function Home() {
               onClick={() => openDetail({ t: "ctg", id: m.id })}
             />
           ))}
-        </Rail>
-      )}
-
-      {bongo.data && (
-        <Rail title="নাটক ও ওয়েব সিরিজ">
-          {bongo.data
-            .find((c) => c.key === "drama")
-            ?.items.slice(0, 14)
-            .map((m) => (
-              <PosterCard key={m.id} className="w-[118px] shrink-0 snap-start" image={m.thumbnail} title={m.title} premium={m.premium} onClick={() => openDetail({ t: "bongo", item: m })} />
-            ))}
         </Rail>
       )}
 

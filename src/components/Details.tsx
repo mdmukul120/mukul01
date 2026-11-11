@@ -12,17 +12,11 @@ import {
   decode,
   fmtViews,
   musicPlaylist,
-  ottDetail,
-  ottList,
-  ottPlaySources,
-  bestFirst,
   timeAgo,
   fetchMovieCatalog,
   ytInnerTubePlayer,
   type CatalogMovie,
   type CatalogPlayer,
-  type OttItem,
-  type OttSource,
   type RelatedItem,
   type Song,
   type YtVideo,
@@ -37,16 +31,8 @@ import { cn } from "../utils/cn";
 function Shell({ children, onBack, hero }: { children: ReactNode; onBack: () => void; hero?: string }) {
   return (
     <div className="app-bg absolute inset-0 z-[55] overflow-y-auto animate-[slideUp_.25s_ease]">
-      <div className="sticky top-0 z-30 h-0">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onBack();
-          }}
-          className="card-edge absolute left-4 top-4 z-40 grid h-11 w-11 place-items-center rounded-full bg-ink/80 text-white backdrop-blur active:scale-90 hover:bg-ink shadow-lg pointer-events-auto cursor-pointer"
-          aria-label="Back"
-        >
+      <div className="sticky top-0 z-20 h-0">
+        <button onClick={onBack} className="card-edge absolute left-4 top-4 grid h-11 w-11 place-items-center rounded-full bg-ink/70 backdrop-blur active:scale-90">
           <ArrowLeft className="h-5 w-5" />
         </button>
       </div>
@@ -101,112 +87,7 @@ const Btn = ({ children, onClick, primary }: { children: ReactNode; onClick?: ()
   </button>
 );
 
-// ───────────────────────── OTT (Mukul Plus) ─────────────────────────
-function OttView({ slug }: { slug: string }) {
-  const { closeDetail, play, toast } = useApp();
-  const { data: d, error, loading, reload } = useAsync(() => ottDetail(slug), [slug]);
-  const list = useAsync(() => ottList(1), []);
-  const [showAll, setShowAll] = useState(false);
 
-  const related = (kind: string | undefined, skip: string): RelatedItem[] =>
-    (list.data || [])
-      .filter((m: OttItem) => m.slug !== skip && (!kind || m.kind === kind))
-      .map((m: OttItem) => ({ key: m.slug, title: m.title, sub: m.language, image: m.poster, open: () => go(m.slug) }));
-
-  async function go(sl: string) {
-    toast("লোড হচ্ছে…");
-    try {
-      const x = await ottDetail(sl);
-      const src = bestFirst(x.watch_sources)[0] || bestFirst(x.episodes[0]?.sources || [])[0];
-      if (!src) return toast("এই কনটেন্টের সোর্স পাওয়া যায়নি");
-      play({ title: x.title, subtitle: x.language, poster: x.backdrop || x.poster, sources: ottPlaySources(src), related: related(x.kind, sl) });
-    } catch {
-      toast("লোড করা যায়নি");
-    }
-  }
-
-  const playSrc = (s: OttSource, title: string, sub?: string) =>
-    play({ title, subtitle: sub, poster: d?.backdrop || d?.poster, sources: ottPlaySources(s), related: related(d?.kind, slug) });
-
-  const label = (s: OttSource) => [s.quality ? `${s.quality}p` : "", s.audio, s.type?.toUpperCase(), s.hevc ? "HEVC" : ""].filter(Boolean).join(" • ");
-
-  return (
-    <Shell onBack={closeDetail} hero={d ? d.backdrop || d.poster : ""}>
-      {loading && <Loading />}
-      {error && <ErrorState message={error} onRetry={reload} />}
-      {d && (
-        <div className="pb-24">
-          <TitleBlock poster={d.poster} title={d.title}>
-            <Meta items={[d.kind?.toUpperCase(), d.language, d.quality, d.resolution, d.imdb_rating ? `★ ${d.imdb_rating}` : null]} />
-          </TitleBlock>
-
-          <div className="mt-5 space-y-1.5 px-5 text-[13px] leading-relaxed text-mute">
-            {d.released && <p><span className="text-white/90">রিলিজ:</span> {d.released}</p>}
-            {d.genre && <p><span className="text-white/90">জনরা:</span> {d.genre}</p>}
-            {d.duration && <p><span className="text-white/90">সময়:</span> {d.duration}</p>}
-            {d.cast && d.cast.length > 0 && <p><span className="text-white/90">কাস্ট:</span> {d.cast.join(", ")}</p>}
-            {d.description && <p className="pt-1">{d.description}</p>}
-          </div>
-
-          {d.episodes.length === 0 && d.watch_sources.length > 0 && (
-            <div className="mt-6 px-5">
-              <h3 className="mb-3 text-base font-bold">দেখুন</h3>
-              <div className="space-y-2.5">
-                {bestFirst(d.watch_sources).map((s, i) => (
-                  <button key={i} onClick={() => playSrc(s, d.title, label(s))} className="panel flex w-full items-center gap-3 rounded-2xl p-3 text-left active:scale-[0.98]">
-                    <span className="glow-soft grid h-11 w-11 place-items-center rounded-full bg-neon text-ink">
-                      <Play className="h-4 w-4 fill-ink" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-bold">{label(s) || `সোর্স ${i + 1}`}</span>
-                      <span className="block truncate text-[10.5px] text-mute">{s.name || s.provider}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {d.episodes.length > 0 && (
-            <div className="mt-6 px-5">
-              <h3 className="mb-3 text-base font-bold">এপিসোড ({d.episodes.length})</h3>
-              <div className="space-y-2.5">
-                {(showAll ? d.episodes : d.episodes.slice(0, 12)).map((ep) => (
-                  <div key={ep.episodeNumber} className="panel rounded-2xl p-3.5">
-                    <p className="text-[13px] font-bold">{decode(ep.title)}</p>
-                    <div className="mt-2.5 flex flex-wrap gap-2">
-                      {bestFirst(ep.sources).map((s, i) => (
-                        <button key={i} onClick={() => playSrc(s, d.title, decode(ep.title))} className="flex items-center gap-1.5 rounded-full bg-neon px-3.5 py-1.5 text-[11px] font-bold text-ink active:scale-95">
-                          <Play className="h-3 w-3 fill-ink" /> {s.quality ? `${s.quality}p` : "প্লে"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {!showAll && d.episodes.length > 12 && (
-                <button onClick={() => setShowAll(true)} className="card-edge mt-3 w-full rounded-full bg-surface2 py-3 text-sm font-semibold">
-                  সব এপিসোড দেখুন
-                </button>
-              )}
-            </div>
-          )}
-
-          {d.screenshots.length > 0 && (
-            <div className="mt-7">
-              <h3 className="mb-3 px-5 text-base font-bold">স্ক্রিনশট</h3>
-              <div className="no-scrollbar flex gap-2.5 overflow-x-auto px-5">
-                {d.screenshots.map((s, i) => (
-                  <img key={i} src={s} alt="" loading="lazy" referrerPolicy="no-referrer" className="card-edge h-28 shrink-0 rounded-xl object-cover" />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </Shell>
-  );
-}
 
 // ───────────────────────── CTGHall ─────────────────────────
 function CtgView({ id }: { id: number }) {
@@ -743,8 +624,6 @@ export default function Details() {
   const { detail } = useApp();
   if (!detail) return null;
   switch (detail.t) {
-    case "ott":
-      return <OttView key={detail.slug} slug={detail.slug} />;
     case "catalog":
       return <CatalogView key={detail.movie.kinopoisk_id} movie={detail.movie} />;
     case "ctg":

@@ -10,10 +10,10 @@ import {
 } from "react";
 import { songUrl, type BongoItem, type CatalogMovie, type PlayRequest, type Song, type YtVideo } from "./api";
 
-export type Tab = "home" | "movies" | "sports" | "live" | "music" | "youtube";
+export type Tab = "home" | "movies" | "sports" | "live" | "music" | "youtube" | "weather";
+export type Theme = "dark" | "light";
 
 export type Detail =
-  | { t: "ott"; slug: string }
   | { t: "catalog"; movie: CatalogMovie }
   | { t: "ctg"; id: number }
   | { t: "bongo"; item: BongoItem }
@@ -23,10 +23,17 @@ export type Detail =
 interface Ctx {
   tab: Tab;
   setTab: (t: Tab) => void;
-  // video
+  // theme
+  theme: Theme;
+  setTheme: (t: Theme) => void;
+  toggleTheme: () => void;
+  // video player
   req: PlayRequest | null;
   play: (r: PlayRequest) => void;
   closePlayer: () => void;
+  // youtube watch mode (for back button support)
+  ytWatch: YtVideo | null;
+  setYtWatch: (v: YtVideo | null) => void;
   // detail stack
   detail: Detail | null;
   openDetail: (d: Detail) => void;
@@ -55,8 +62,6 @@ interface Ctx {
   toggleFavCh: (name: string) => void;
   toast: (m: string) => void;
   toastMsg: string;
-  theme: "dark" | "light";
-  toggleTheme: () => void;
 }
 
 const C = createContext<Ctx>(null as unknown as Ctx);
@@ -86,14 +91,50 @@ function useLocal<T>(key: string, init: T): [T, (v: T) => void] {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [tab, setTab] = useState<Tab>("home");
+  const [tab, setTabState] = useState<Tab>("home");
   const [req, setReq] = useState<PlayRequest | null>(null);
+  const [ytWatch, setYtWatch] = useState<YtVideo | null>(null);
   const [details, setDetails] = useState<Detail[]>([]);
   const [fullOpen, setFull] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [quality, setQuality] = useLocal<string>("q", "160kbps");
   const [liked, setLiked] = useLocal<Song[]>("liked", []);
   const [favCh, setFavCh] = useLocal<string[]>("favch", []);
+
+  // Theme management with localStorage persistence
+  const [theme, setThemeState] = useState<Theme>(() => {
+    try {
+      const saved = localStorage.getItem("app_theme");
+      if (saved === "light" || saved === "dark") return saved;
+    } catch {
+      /* ignore */
+    }
+    return "dark";
+  });
+
+  const setTheme = useCallback((t: Theme) => {
+    setThemeState(t);
+    try {
+      localStorage.setItem("app_theme", t);
+    } catch {
+      /* ignore */
+    }
+    if (typeof document !== "undefined") {
+      document.documentElement.classList.toggle("dark", t === "dark");
+      document.documentElement.classList.toggle("light", t === "light");
+      document.documentElement.setAttribute("data-theme", t);
+    }
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  }, [theme, setTheme]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.classList.toggle("light", theme === "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
   const [queue, setQueue] = useState<Song[]>([]);
   const [index, setIndex] = useState(-1);
@@ -113,137 +154,103 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toastTimer.current = window.setTimeout(() => setToastMsg(""), 2600);
   }, []);
 
-  // ── Theme Management ──
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    try {
-      const saved = localStorage.getItem("mukul_theme");
-      if (saved === "light" || saved === "dark") return saved;
-    } catch {
-      /* ignore */
-    }
-    return "dark";
-  });
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    try {
-      localStorage.setItem("mukul_theme", theme);
-    } catch {
-      /* ignore */
-    }
-  }, [theme]);
-
-  const toggleTheme = useCallback(() => {
-    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
-  }, []);
-
-  // ── history-based back button handling ──
+  // ── references for back-button handling ──
   const reqRef = useRef<PlayRequest | null>(null);
   reqRef.current = req;
-  const detailsRef = useRef<Detail[]>([]);
-  detailsRef.current = details;
+  const ytWatchRef = useRef<YtVideo | null>(null);
+  ytWatchRef.current = ytWatch;
   const fullRef = useRef(false);
   fullRef.current = fullOpen;
+  const detailsRef = useRef<Detail[]>([]);
+  detailsRef.current = details;
   const tabRef = useRef<Tab>("home");
   tabRef.current = tab;
-  const lastBack = useRef(0);
+  const lastBackPress = useRef<number>(0);
 
-  // Keep browser history seeded so back button does not exit the app abruptly
+  const setTab = useCallback((t: Tab) => {
+    setTabState(t);
+  }, []);
+
+  // Initialize browser history entry so Android back button can be intercepted
   useEffect(() => {
     try {
-      if (!history.state || !history.state.mukul) {
-        history.replaceState({ mukul: true, level: 0 }, "");
-      }
+      history.replaceState({ app: true, depth: 0 }, "");
+      history.pushState({ app: true, depth: 1 }, "");
     } catch {
       /* ignore */
     }
 
-    const onBack = (e: Event) => {
-      e.preventDefault?.();
-      // 1. If video player is open -> close it
+    const onPop = () => {
+      // 1. Exit fullscreen if active
+      if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+        (document.exitFullscreen?.() ?? (document as any).webkitExitFullscreen?.())?.catch(() => undefined);
+        history.pushState({ app: true, depth: 1 }, "");
+        return;
+      }
+
+      // 2. Video Player modal open -> close it
       if (reqRef.current) {
         setReq(null);
-        try {
-          history.pushState({ mukul: true }, "");
-        } catch {}
+        history.pushState({ app: true, depth: 1 }, "");
         return;
       }
-      // 2. If details modal is open -> close the top-most detail
-      if (detailsRef.current.length > 0) {
-        setDetails((d) => d.slice(0, -1));
-        try {
-          history.pushState({ mukul: true }, "");
-        } catch {}
+
+      // 3. YouTube Watch modal open -> close it
+      if (ytWatchRef.current) {
+        setYtWatch(null);
+        history.pushState({ app: true, depth: 1 }, "");
         return;
       }
-      // 3. If full music player is open -> minimize it
+
+      // 4. Music Full Player open -> close it
       if (fullRef.current) {
         setFull(false);
-        try {
-          history.pushState({ mukul: true }, "");
-        } catch {}
+        history.pushState({ app: true, depth: 1 }, "");
         return;
       }
-      // 4. If not on home tab -> return to home tab
+
+      // 5. Details modal open -> pop top item
+      if (detailsRef.current.length > 0) {
+        setDetails((d) => d.slice(0, -1));
+        history.pushState({ app: true, depth: 1 }, "");
+        return;
+      }
+
+      // 6. If currently on any sub-tab (movies, sports, tv, music, youtube, weather), go to home
       if (tabRef.current !== "home") {
-        setTab("home");
-        try {
-          history.pushState({ mukul: true }, "");
-        } catch {}
+        setTabState("home");
+        history.pushState({ app: true, depth: 1 }, "");
         return;
       }
-      // 5. On home tab: require double press to exit
+
+      // 7. On home tab with nothing open: require double tap within 2.5s to exit
       const now = Date.now();
-      if (now - lastBack.current < 2200) {
-        // user pressed twice within 2.2s, allow default exit
+      if (now - lastBackPress.current < 2500) {
+        // Allow app exit
         return;
       }
-      lastBack.current = now;
-      toast("অ্যাপ থেকে বের হতে আবার ব্যাক চাপুন");
-      try {
-        history.pushState({ mukul: true }, "");
-      } catch {}
+      lastBackPress.current = now;
+      toast("অ্যাপ বন্ধ করতে আবার ব্যাক চাপুন");
+      history.pushState({ app: true, depth: 1 }, "");
     };
 
-    window.addEventListener("popstate", onBack);
-    document.addEventListener("backbutton", onBack as any);
-
-    let capHandle: any = null;
-    try {
-      import("@capacitor/app")
-        .then(({ App: CapApp }) => {
-          CapApp.addListener("backButton", () => {
-            onBack({ preventDefault: () => {} } as any);
-          }).then((h) => {
-            capHandle = h;
-          });
-        })
-        .catch(() => {});
-    } catch {}
-
-    return () => {
-      window.removeEventListener("popstate", onBack);
-      document.removeEventListener("backbutton", onBack as any);
-      capHandle?.remove?.();
-    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, [toast]);
 
   const play = useCallback((r: PlayRequest) => {
     audioRef.current?.pause();
-    try {
-      history.pushState({ mukul: true, type: "video" }, "");
-    } catch {}
     setReq(r);
   }, []);
 
   const closePlayer = useCallback(() => {
+    if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+      (document.exitFullscreen?.() ?? (document as any).webkitExitFullscreen?.())?.catch(() => undefined);
+    }
     setReq(null);
   }, []);
 
   const openDetail = useCallback((d: Detail) => {
-    try {
-      history.pushState({ mukul: true, type: "detail" }, "");
-    } catch {}
     setDetails((s) => [...s, d]);
   }, []);
 
@@ -252,9 +259,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openFull = useCallback(() => {
-    try {
-      history.pushState({ mukul: true, type: "full" }, "");
-    } catch {}
     setFull(true);
   }, []);
 
@@ -287,6 +291,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!q.length) return;
     loadIndex((indexRef.current + 1) % q.length);
   }, [loadIndex]);
+
   const prev = useCallback(() => {
     const a = audioRef.current;
     const q = queueRef.current;
@@ -334,12 +339,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [loadIndex]
   );
+
   const toggle = useCallback(() => {
     const a = audioRef.current;
     if (!a || !a.src) return;
     if (a.paused) a.play().catch(() => undefined);
     else a.pause();
   }, []);
+
   const seek = useCallback((t: number) => {
     if (audioRef.current) audioRef.current.currentTime = t;
   }, []);
@@ -351,6 +358,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [liked, setLiked]
   );
+
   const toggleFavCh = useCallback(
     (name: string) => setFavCh(favCh.includes(name) ? favCh.filter((x) => x !== name) : [...favCh, name]),
     [favCh, setFavCh]
@@ -360,9 +368,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () => ({
       tab,
       setTab,
+      theme,
+      setTheme,
+      toggleTheme,
       req,
       play,
       closePlayer,
+      ytWatch,
+      setYtWatch,
       detail: details[details.length - 1] || null,
       openDetail,
       closeDetail,
@@ -389,10 +402,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toggleFavCh,
       toast,
       toastMsg,
-      theme,
-      toggleTheme,
     }),
-    [tab, req, details, queue, index, playing, progress, duration, fullOpen, quality, liked, favCh, toastMsg, theme, toggleTheme, play, closePlayer, openDetail, closeDetail, playQueue, toggle, next, prev, seek, openFull, closeFull, setQuality, toggleLike, toggleFavCh, toast]
+    [
+      tab,
+      theme,
+      req,
+      ytWatch,
+      details,
+      queue,
+      index,
+      playing,
+      progress,
+      duration,
+      fullOpen,
+      quality,
+      liked,
+      favCh,
+      toastMsg,
+      setTab,
+      setTheme,
+      toggleTheme,
+      play,
+      closePlayer,
+      openDetail,
+      closeDetail,
+      playQueue,
+      toggle,
+      next,
+      prev,
+      seek,
+      openFull,
+      closeFull,
+      setQuality,
+      toggleLike,
+      toggleFavCh,
+      toast,
+    ]
   );
 
   return <C.Provider value={value}>{children}</C.Provider>;
