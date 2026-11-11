@@ -226,7 +226,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // 7. On home tab with nothing open: require double tap within 2.5s to exit
       const now = Date.now();
       if (now - lastBackPress.current < 2500) {
-        // Allow app exit
+        // Allow app exit on native Android if inside Capacitor
+        if (typeof window !== "undefined" && (window as any).Capacitor?.isNativePlatform?.()) {
+          import("@capacitor/app").then(({ App }) => App.exitApp()).catch(() => undefined);
+        }
         return;
       }
       lastBackPress.current = now;
@@ -235,7 +238,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
 
     window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+
+    // Register Capacitor native Android hardware back button listener
+    let capSub: { remove: () => void } | null = null;
+    if (typeof window !== "undefined" && (window as any).Capacitor?.isNativePlatform?.()) {
+      import("@capacitor/app")
+        .then(({ App }) => {
+          App.addListener("backButton", () => onPop())
+            .then((sub) => {
+              capSub = sub;
+            })
+            .catch(() => undefined);
+        })
+        .catch(() => undefined);
+    }
+
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      capSub?.remove();
+    };
   }, [toast]);
 
   const play = useCallback((r: PlayRequest) => {
