@@ -12,7 +12,7 @@ def appVersionName = (project.findProperty('versionName')
 // Release signing: reads from android/keystore.properties (git-ignored) or from
 // the environment variables KEYSTORE_FILE / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD.
 // If they are absent a release build is produced unsigned and can still be signed
-// afterwards with zipalign + apksigner (see .github/workflows/android.yml).
+// afterwards with zipalign + apksigner (see .github/workflows/android-build.yml).
 def keystorePropsFile = rootProject.file('keystore.properties')
 def keystoreProps = new Properties()
 if (keystorePropsFile.exists()) {
