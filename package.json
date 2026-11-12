@@ -9,7 +9,9 @@
     "start": "tsx server.ts",
     "lint": "tsc --noEmit",
     "preview": "vite preview",
-    "cap:sync": "npm run build && cap sync android"
+    "cap:sync": "npm run build && cap sync android",
+    "android:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
+    "android:release": "npm run cap:sync && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
     "@capacitor/android": "^7.4.3",

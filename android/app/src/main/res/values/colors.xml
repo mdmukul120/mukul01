@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mukul Plus brand palette -->
+    <color name="colorPrimary">#040a06</color>
+    <color name="colorPrimaryDark">#040a06</color>
+    <color name="colorAccent">#2ee83f</color>
+    <color name="neon_green">#2ee83f</color>
+    <color name="ink">#040a06</color>
+</resources>
