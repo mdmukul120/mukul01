@@ -3,6 +3,9 @@ export interface PlaySource {
   label: string;
   url: string;
   hls?: boolean;
+  dash?: boolean;
+  clearKey?: string | null;
+  noLocalProxy?: boolean;
 }
 
 export interface PlayRequest {
@@ -389,14 +392,24 @@ export async function fetchMovieCatalog(): Promise<CatalogCategory[]> {
 }
 
 // ───────────────────────── Sports ─────────────────────────
+export interface SportTeam {
+  name: string;
+  logo?: string;
+}
+
 export interface SportMatch {
   id: string;
   title: string;
   image?: string;
   status: "live" | "upcoming" | string;
+  statusDetail?: string;
   sport?: string;
   league?: string;
+  leagueLogo?: string;
+  teamA?: SportTeam;
+  teamB?: SportTeam;
   start?: string;
+  dhakaTime?: string;
   servers: PlaySource[];
 }
 export interface Highlight {
@@ -493,6 +506,61 @@ export async function sportsFeed(): Promise<{ matches: SportMatch[]; highlights:
   };
 }
 
+export async function sportsMukulLive(): Promise<SportMatch[]> {
+  const d = await getData<any>("https://mukullive.ai.studio/api/matches", { ttl: 30_000 });
+  return (d.matches || []).map((m: any) => {
+    const servers: PlaySource[] = [];
+    const pushSrv = (srv: PlaySource) => {
+      if (srv.url && !servers.find((x) => x.url === srv.url)) servers.push(srv);
+    };
+    (m.servers || []).forEach((s: any, idx: number) => {
+      if (!s || s.type === "token") return;
+      const rawUrl = String(s.proxyUrl || s.directUrl || "");
+      if (!rawUrl) return;
+      const isDash = s.type === "dash" || /\.mpd(\?|$)/i.test(rawUrl) || /\.mpd(\?|$)/i.test(s.directUrl || "");
+      const isHls = !isDash && (s.type === "hls" || isHlsUrl(rawUrl) || isHlsUrl(s.directUrl || ""));
+      const cleanKey = s.clearKey ? String(s.clearKey).replace(/[^0-9a-fA-F:]/g, "") : null;
+      const clearKey = cleanKey && cleanKey.includes(":") ? cleanKey : null;
+      const baseName = decode(s.name) || `সার্ভার ${idx + 1}`;
+      if (s.proxyUrl) {
+        pushSrv({
+          label: baseName,
+          url: s.proxyUrl,
+          hls: isHls,
+          dash: isDash,
+          clearKey,
+          noLocalProxy: true,
+        });
+      }
+      if (s.directUrl && (!s.proxyUrl || /^https:\/\//i.test(s.directUrl))) {
+        pushSrv({
+          label: s.proxyUrl ? `${baseName} (ডিরেক্ট)` : baseName,
+          url: s.directUrl,
+          hls: isHls,
+          dash: isDash,
+          clearKey,
+        });
+      }
+    });
+
+    return {
+      id: "ml-" + String(m.id),
+      title: decode(m.title),
+      image: m.image || m.leagueLogo || "",
+      status: String(m.status || "").toLowerCase(),
+      statusDetail: decode(m.statusDetail || m.statusLabel || ""),
+      sport: m.sport,
+      league: decode(m.league),
+      leagueLogo: m.leagueLogo,
+      teamA: m.teamA ? { name: decode(m.teamA.name), logo: m.teamA.logo } : undefined,
+      teamB: m.teamB ? { name: decode(m.teamB.name), logo: m.teamB.logo } : undefined,
+      start: m.startsAtUtc,
+      dhakaTime: decode(m.dhakaTime),
+      servers,
+    } as SportMatch;
+  });
+}
+
 export interface SportsData {
   matches: SportMatch[];
   highlights: Highlight[];
@@ -500,18 +568,27 @@ export interface SportsData {
 }
 
 export async function loadSports(): Promise<SportsData> {
-  const [a, b] = await Promise.allSettled([sportsMatches(), sportsFeed()]);
-  if (a.status === "rejected" && b.status === "rejected") throw a.reason;
+  const [a, b, c] = await Promise.allSettled([sportsMatches(), sportsFeed(), sportsMukulLive()]);
+  if (a.status === "rejected" && b.status === "rejected" && c.status === "rejected") throw c.reason;
   const byKey = new Map<string, SportMatch>();
-  [...(a.status === "fulfilled" ? a.value : []), ...(b.status === "fulfilled" ? b.value.matches : [])].forEach((m) => {
+  [
+    ...(c.status === "fulfilled" ? c.value : []),
+    ...(a.status === "fulfilled" ? a.value : []),
+    ...(b.status === "fulfilled" ? b.value.matches : []),
+  ].forEach((m) => {
     const k = m.title.toLowerCase().replace(/[^a-z0-9\u0980-\u09ff]+/g, "") + "|" + (m.status === "live" ? "l" : "u");
     const ex = byKey.get(k);
     if (!ex) return void byKey.set(k, { ...m, servers: [...m.servers] });
     m.servers.forEach((sv) => {
-      if (!ex.servers.find((e) => e.url === sv.url)) ex.servers.push({ ...sv, label: `সার্ভার ${ex.servers.length + 1}` });
+      if (!ex.servers.find((e) => e.url === sv.url)) ex.servers.push({ ...sv, label: sv.label || `সার্ভার ${ex.servers.length + 1}` });
     });
     ex.image = ex.image || m.image;
     ex.league = ex.league || m.league;
+    ex.leagueLogo = ex.leagueLogo || m.leagueLogo;
+    ex.teamA = ex.teamA || m.teamA;
+    ex.teamB = ex.teamB || m.teamB;
+    ex.statusDetail = ex.statusDetail || m.statusDetail;
+    ex.dhakaTime = ex.dhakaTime || m.dhakaTime;
     ex.sport = ex.sport || m.sport;
     ex.start = ex.start || m.start;
   });

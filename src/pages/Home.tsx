@@ -11,6 +11,9 @@ interface HeroItem {
   key: string;
   title: string;
   img?: string;
+  leagueLogo?: string;
+  teamA?: { name: string; logo?: string };
+  teamB?: { name: string; logo?: string };
   badge: string;
   pill: string;
   desc: string;
@@ -59,31 +62,60 @@ function Hero({ items }: { items: HeroItem[] }) {
         onTouchStart={() => (touched.current = true)}
         className="no-scrollbar flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-[18%] pb-8 pt-6"
       >
-        {items.map((h, k) => (
-          <button
-            key={h.key}
-            onClick={() => (k === i ? h.open() : goTo(k))}
-            className={cn(
-              "relative h-[330px] w-[64%] shrink-0 snap-center overflow-hidden rounded-[28px] bg-surface text-left transition-all duration-500",
-              k === i ? "glow-ring scale-100" : "card-edge scale-[0.86] opacity-50"
-            )}
-          >
-            <div className="relative h-[58%] w-full overflow-hidden bg-surface2">
-              {h.img && <img src={h.img} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover object-top" />}
-              <div className="absolute inset-0 bg-gradient-to-t from-surface via-transparent to-black/20" />
-              <span className="absolute right-3 top-3 rounded-full bg-ink/75 px-3 py-1 text-[11px] font-extrabold text-neon backdrop-blur">{h.badge}</span>
-              {h.live && (
-                <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-ink/75 px-2.5 py-1 text-[10px] font-extrabold backdrop-blur">
-                  <span className="live-dot h-2.5 w-2.5 rounded-full bg-live" /> LIVE
-                </span>
+        {items.map((h, k) => {
+          const hasTeams = !!(h.teamA?.logo || h.teamB?.logo) && (!h.img || h.img === h.leagueLogo);
+          return (
+            <button
+              key={h.key}
+              onClick={() => (k === i ? h.open() : goTo(k))}
+              className={cn(
+                "relative h-[330px] w-[64%] shrink-0 snap-center overflow-hidden rounded-[28px] bg-surface text-left transition-all duration-500",
+                k === i ? "glow-ring scale-100" : "card-edge scale-[0.86] opacity-50"
               )}
-            </div>
-            <div className="flex h-[42%] flex-col justify-between p-4">
-              <h3 className="line-clamp-2 text-[17px] font-bold leading-tight">{h.title}</h3>
-              <span className="w-fit rounded-full bg-neon/10 px-3 py-1 text-[12px] font-bold text-neon">{h.pill}</span>
-            </div>
-          </button>
-        ))}
+            >
+              <div className="relative h-[58%] w-full overflow-hidden bg-surface2">
+                {hasTeams ? (
+                  <div className="flex h-full w-full items-center justify-center gap-3 bg-gradient-to-br from-[#0f2419] via-[#09150e] to-[#040a06] px-4 pt-6">
+                    <div className="flex w-[38%] flex-col items-center gap-1.5 text-center">
+                      <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-full bg-white/10 p-2 ring-1 ring-white/15">
+                        {h.teamA?.logo ? (
+                          <img src={h.teamA.logo} alt={h.teamA.name} referrerPolicy="no-referrer" className="h-full w-full object-contain" />
+                        ) : (
+                          <span className="text-xs font-extrabold text-neon">{(h.teamA?.name || "A").slice(0, 2).toUpperCase()}</span>
+                        )}
+                      </div>
+                      <span className="line-clamp-1 text-[10px] font-semibold text-white/85">{h.teamA?.name}</span>
+                    </div>
+                    <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-black tracking-wider text-neon">VS</span>
+                    <div className="flex w-[38%] flex-col items-center gap-1.5 text-center">
+                      <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-full bg-white/10 p-2 ring-1 ring-white/15">
+                        {h.teamB?.logo ? (
+                          <img src={h.teamB.logo} alt={h.teamB.name} referrerPolicy="no-referrer" className="h-full w-full object-contain" />
+                        ) : (
+                          <span className="text-xs font-extrabold text-neon">{(h.teamB?.name || "B").slice(0, 2).toUpperCase()}</span>
+                        )}
+                      </div>
+                      <span className="line-clamp-1 text-[10px] font-semibold text-white/85">{h.teamB?.name}</span>
+                    </div>
+                  </div>
+                ) : (
+                  h.img && <img src={h.img} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover object-top" />
+                )}
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-surface via-transparent to-black/20" />
+                <span className="absolute right-3 top-3 rounded-full bg-ink/75 px-3 py-1 text-[11px] font-extrabold text-neon backdrop-blur">{h.badge}</span>
+                {h.live && (
+                  <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-ink/75 px-2.5 py-1 text-[10px] font-extrabold backdrop-blur">
+                    <span className="live-dot h-2.5 w-2.5 rounded-full bg-live" /> LIVE
+                  </span>
+                )}
+              </div>
+              <div className="flex h-[42%] flex-col justify-between p-4">
+                <h3 className="line-clamp-2 text-[17px] font-bold leading-tight">{h.title}</h3>
+                <span className="w-fit rounded-full bg-neon/10 px-3 py-1 text-[12px] font-bold text-neon">{h.pill}</span>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       <div className="panel mx-5 flex items-center gap-4 rounded-[26px] p-4">
@@ -119,14 +151,17 @@ export default function Home() {
 
   const heroItems = useMemo<HeroItem[]>(() => {
     const a: HeroItem[] = [...live, ...upcoming]
-      .filter((m) => m.image)
+      .filter((m) => m.image || m.teamA?.logo || m.teamB?.logo)
       .slice(0, 4)
       .map((m) => ({
         key: "m" + m.id,
         title: m.title,
         img: m.image,
+        leagueLogo: m.leagueLogo,
+        teamA: m.teamA,
+        teamB: m.teamB,
         badge: (m.sport || "SPORTS").toUpperCase(),
-        pill: m.status === "live" ? "এখন লাইভ" : fmtStart(m.start) || "শীঘ্রই",
+        pill: m.status === "live" ? m.statusDetail || "এখন লাইভ" : m.statusDetail || m.dhakaTime || fmtStart(m.start) || "শীঘ্রই",
         desc: [m.league, m.servers.length ? `${m.servers.length} টি সার্ভার` : "স্ট্রিম শীঘ্রই"].filter(Boolean).join(" • "),
         live: m.status === "live",
         cta: "স্ট্রিমিং দেখুন",

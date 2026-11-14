@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
+import shaka from "shaka-player";
 import { ArrowLeft, Copy, Download, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
 import { useApp } from "../lib/store";
 import { isHlsUrl, isMkvUrl, streamUrl, type PlaySource } from "../lib/api";
@@ -11,6 +12,8 @@ interface Attempt {
   si: number;
   url: string;
   hls: boolean;
+  dash: boolean;
+  clearKey?: string | null;
   native: boolean;
 }
 
@@ -18,14 +21,24 @@ interface Attempt {
 function buildAttempts(sources: PlaySource[]): Attempt[] {
   const out: Attempt[] = [];
   sources.forEach((s, si) => {
-    const hls = !!s.hls || isHlsUrl(s.url);
+    const dash = !!s.dash || /\.mpd(\?|$)/i.test(s.url);
+    const hls = !dash && (!!s.hls || isHlsUrl(s.url));
+    if (dash) {
+      out.push({ si, url: s.url, hls: false, dash: true, clearKey: s.clearKey, native: false });
+      if (!s.noLocalProxy && !s.url.startsWith("http://")) {
+        out.push({ si, url: streamUrl(s.url), hls: false, dash: true, clearKey: s.clearKey, native: false });
+      }
+      return;
+    }
     if (!s.url.startsWith("http://")) {
       if (hls) {
-        out.push({ si, url: s.url, hls, native: false });
-        out.push({ si, url: s.url, hls, native: true });
-      } else out.push({ si, url: s.url, hls, native: true });
+        out.push({ si, url: s.url, hls, dash: false, native: false });
+        out.push({ si, url: s.url, hls, dash: false, native: true });
+      } else out.push({ si, url: s.url, hls, dash: false, native: true });
     }
-    out.push({ si, url: streamUrl(s.url), hls, native: !hls });
+    if (!s.noLocalProxy) {
+      out.push({ si, url: streamUrl(s.url), hls, dash: false, native: !hls });
+    }
   });
   return out;
 }
@@ -35,6 +48,7 @@ export default function VideoPlayer() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const shakaRef = useRef<shaka.Player | null>(null);
   const [step, setStep] = useState(0);
   const [tick, setTick] = useState(0);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -82,6 +96,7 @@ export default function VideoPlayer() {
     setStatus("loading");
     setBuffering(true);
     let hls: Hls | null = null;
+    let dashPlayer: shaka.Player | null = null;
     let dead = false;
 
     const fail = () => {
@@ -120,7 +135,40 @@ export default function VideoPlayer() {
     v.addEventListener("waiting", onWait);
     v.addEventListener("ended", onEnded);
 
-    if (att.hls && !att.native && Hls.isSupported()) {
+    if (att.dash) {
+      hlsRef.current = null;
+      shaka.polyfill.installAll();
+      if (shaka.Player.isBrowserSupported()) {
+        dashPlayer = new shaka.Player();
+        shakaRef.current = dashPlayer;
+        if (att.clearKey && att.clearKey.includes(":")) {
+          const [kid, key] = att.clearKey.split(":");
+          if (kid && key) {
+            dashPlayer.configure({
+              drm: {
+                clearKeys: {
+                  [kid.toLowerCase()]: key.toLowerCase(),
+                },
+              },
+            });
+          }
+        }
+        dashPlayer.addEventListener("error", () => fail());
+        dashPlayer
+          .attach(v)
+          .then(() => (dashPlayer && !dead ? dashPlayer.load(att.url) : Promise.resolve()))
+          .then(() => {
+            if (dead || !dashPlayer) return;
+            const tracks = dashPlayer.getVariantTracks();
+            setLevels([...new Set(tracks.map((t) => t.height).filter((h): h is number => !!h))].sort((a, b) => b - a));
+            v.play().catch(() => undefined);
+          })
+          .catch(() => fail());
+      } else {
+        fail();
+      }
+    } else if (att.hls && !att.native && Hls.isSupported()) {
+      shakaRef.current = null;
       hls = new Hls({ enableWorker: true, lowLatencyMode: false, maxBufferLength: 30 });
       hlsRef.current = hls;
       hls.loadSource(att.url);
@@ -136,6 +184,7 @@ export default function VideoPlayer() {
       });
     } else {
       hlsRef.current = null;
+      shakaRef.current = null;
       v.src = att.url;
       v.play().catch(() => undefined);
     }
@@ -164,6 +213,8 @@ export default function VideoPlayer() {
       v.removeEventListener("ended", onEnded);
       hls?.destroy();
       hlsRef.current = null;
+      dashPlayer?.destroy().catch(() => undefined);
+      shakaRef.current = null;
       v.removeAttribute("src");
       v.load();
     };
@@ -232,6 +283,17 @@ export default function VideoPlayer() {
           options={[{ id: "-1", label: "অটো" }, ...levels.map((h) => ({ id: String(h), label: h + "p" }))]}
           onPick={(id) => {
             setLevel(id);
+            if (shakaRef.current) {
+              const sp = shakaRef.current;
+              if (id === "-1") {
+                sp.configure({ abr: { enabled: true } });
+              } else {
+                sp.configure({ abr: { enabled: false } });
+                const track = sp.getVariantTracks().find((t) => t.height === Number(id));
+                if (track) sp.selectVariantTrack(track, true);
+              }
+              return;
+            }
             const h = hlsRef.current;
             if (!h) return;
             h.currentLevel = id === "-1" ? -1 : h.levels.findIndex((l) => l.height === Number(id));

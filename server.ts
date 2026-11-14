@@ -28,6 +28,7 @@ const ALLOWED_PROXY_PATTERNS = [
   /(^|\.)hunts439kow\.com$/,
   /(^|\.)youtubei\.googleapis\.com$/,
   /(^|\.)googlevideo\.com$/,
+  /(^|\.)mukullive\.ai\.studio$/,
 ];
 
 function isPrivateHost(host: string): boolean {

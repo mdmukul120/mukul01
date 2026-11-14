@@ -59,22 +59,51 @@ export default function Sports() {
         <>
           {showLive &&
             (live.length ? (
-              <Rail title="লাইভ ম্যাচসমূহ" count={live.length} dot="live">
-                {live.map((m) => (
-                  <MatchTile key={m.id} m={m} onPlay={playMatch} />
-                ))}
-              </Rail>
+              filter === "live" ? (
+                <section className="mt-7">
+                  <h2 className="mb-3.5 flex items-center gap-2.5 px-5 text-[18px] font-bold">
+                    <span className="live-dot h-3 w-3 rounded-full bg-live" /> লাইভ ম্যাচসমূহ ({live.length})
+                  </h2>
+                  <div className="grid grid-cols-1 gap-3.5 px-5 sm:grid-cols-2 lg:grid-cols-3">
+                    {live.map((m) => (
+                      <MatchTile key={m.id} m={m} wide onPlay={playMatch} />
+                    ))}
+                  </div>
+                </section>
+              ) : (
+                <Rail title="লাইভ ম্যাচসমূহ" count={live.length} dot="live">
+                  {live.map((m) => (
+                    <MatchTile key={m.id} m={m} onPlay={playMatch} />
+                  ))}
+                </Rail>
+              )
             ) : (
               filter === "live" && <p className="panel mx-5 mt-6 rounded-2xl p-5 text-center text-sm text-mute">এখন কোনো লাইভ ম্যাচ নেই</p>
             ))}
 
-          {showUp && upcoming.length > 0 && (
-            <Rail title="আসন্ন ম্যাচসমূহ" count={upcoming.length} dot="soon">
-              {upcoming.map((m) => (
-                <MatchTile key={m.id} m={m} onPlay={playMatch} />
-              ))}
-            </Rail>
-          )}
+          {showUp &&
+            (upcoming.length > 0 ? (
+              filter === "upcoming" ? (
+                <section className="mt-7">
+                  <h2 className="mb-3.5 flex items-center gap-2.5 px-5 text-[18px] font-bold">
+                    <span className="h-3 w-3 rounded-full bg-neon" /> আসন্ন ম্যাচসমূহ ({upcoming.length})
+                  </h2>
+                  <div className="grid grid-cols-1 gap-3.5 px-5 sm:grid-cols-2 lg:grid-cols-3">
+                    {upcoming.map((m) => (
+                      <MatchTile key={m.id} m={m} wide onPlay={playMatch} />
+                    ))}
+                  </div>
+                </section>
+              ) : (
+                <Rail title="আসন্ন ম্যাচসমূহ" count={upcoming.length} dot="soon">
+                  {upcoming.map((m) => (
+                    <MatchTile key={m.id} m={m} onPlay={playMatch} />
+                  ))}
+                </Rail>
+              )
+            ) : (
+              filter === "upcoming" && <p className="panel mx-5 mt-6 rounded-2xl p-5 text-center text-sm text-mute">এখন কোনো আসন্ন ম্যাচ নেই</p>
+            ))}
 
           {showHl && (
             <>

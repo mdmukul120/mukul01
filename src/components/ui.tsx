@@ -300,11 +300,12 @@ export function Footer() {
   );
 }
 
-/** Landscape match card (image-first, like the reference design). */
+/** Landscape match card (team crests VS view or banner image). */
 export function MatchTile({ m, onPlay, wide }: { m: SportMatch; onPlay: (m: SportMatch) => void; wide?: boolean }) {
   const live = m.status === "live";
   const [err, setErr] = useState(false);
-  const t = fmtStart(m.start);
+  const hasTeams = !!(m.teamA?.logo || m.teamB?.logo);
+  const t = m.statusDetail || m.dhakaTime || fmtStart(m.start);
   return (
     <button
       onClick={() => onPlay(m)}
@@ -313,23 +314,60 @@ export function MatchTile({ m, onPlay, wide }: { m: SportMatch; onPlay: (m: Spor
         wide ? "w-full" : "w-[72%] max-w-[300px]"
       )}
     >
-      {m.image && !err ? (
+      {hasTeams ? (
+        <div className="relative flex h-full w-full flex-col justify-center bg-gradient-to-br from-[#0f2419] via-[#09150e] to-[#040a06] px-4 pb-8 pt-6">
+          <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-neon/10 blur-2xl" />
+          <div className="flex items-center justify-center gap-3">
+            <div className="flex w-[38%] flex-col items-center gap-1 text-center">
+              <div className="grid h-12 w-12 place-items-center overflow-hidden rounded-full bg-white/10 p-1.5 ring-1 ring-white/15">
+                {m.teamA?.logo ? (
+                  <img src={m.teamA.logo} alt={m.teamA.name} loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-contain" />
+                ) : (
+                  <span className="text-xs font-extrabold text-neon">{(m.teamA?.name || "A").slice(0, 2).toUpperCase()}</span>
+                )}
+              </div>
+              <span className="line-clamp-1 text-[10px] font-semibold text-white/85">{m.teamA?.name}</span>
+            </div>
+            <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-black tracking-wider text-neon">VS</span>
+            <div className="flex w-[38%] flex-col items-center gap-1 text-center">
+              <div className="grid h-12 w-12 place-items-center overflow-hidden rounded-full bg-white/10 p-1.5 ring-1 ring-white/15">
+                {m.teamB?.logo ? (
+                  <img src={m.teamB.logo} alt={m.teamB.name} loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-contain" />
+                ) : (
+                  <span className="text-xs font-extrabold text-neon">{(m.teamB?.name || "B").slice(0, 2).toUpperCase()}</span>
+                )}
+              </div>
+              <span className="line-clamp-1 text-[10px] font-semibold text-white/85">{m.teamB?.name}</span>
+            </div>
+          </div>
+        </div>
+      ) : m.image && !err ? (
         <img src={m.image} alt={m.title} loading="lazy" referrerPolicy="no-referrer" onError={() => setErr(true)} className="h-full w-full object-cover" />
       ) : (
-        <div className="grid h-full w-full place-items-center bg-gradient-to-br from-surface2 to-ink p-4 text-center text-sm font-bold">{m.title}</div>
+        <div className="grid h-full w-full place-items-center bg-gradient-to-br from-surface2 to-ink p-4 text-center text-sm font-bold text-white">{m.title}</div>
       )}
-      <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/85 to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
       {live ? (
-        <span className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-ink/70 px-2 py-1 text-[10px] font-extrabold text-white backdrop-blur">
-          <span className="live-dot h-2.5 w-2.5 rounded-full bg-live" /> LIVE
+        <span className="absolute right-3 top-2.5 flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-1 text-[10px] font-extrabold text-white backdrop-blur">
+          <span className="live-dot h-2.5 w-2.5 rounded-full bg-live" /> {m.statusDetail || "LIVE"}
         </span>
       ) : (
-        t && <span className="absolute left-3 top-3 rounded-full bg-ink/75 px-2.5 py-1 text-[10px] font-bold text-neon backdrop-blur">{t}</span>
+        t && <span className="absolute left-3 top-2.5 rounded-full bg-black/75 px-2.5 py-1 text-[10px] font-bold text-neon backdrop-blur">{t}</span>
+      )}
+      {m.sport && (
+        <span className={cn("absolute top-2.5 rounded-full bg-black/65 px-2 py-0.5 text-[9.5px] font-bold text-white/80 backdrop-blur", live ? "left-3" : "right-3")}>
+          {m.sport}
+        </span>
       )}
       <div className="absolute inset-x-3 bottom-2.5 flex items-end justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-[12.5px] font-bold">{m.title}</p>
-          {m.league && <p className="truncate text-[10.5px] text-mute">{m.league}</p>}
+          <p className="truncate text-[12.5px] font-bold text-white">{m.title}</p>
+          {m.league && (
+            <p className="flex items-center gap-1 truncate text-[10.5px] text-white/70">
+              {m.leagueLogo && <img src={m.leagueLogo} alt="" referrerPolicy="no-referrer" className="h-3.5 w-3.5 shrink-0 rounded-sm object-contain" />}
+              <span className="truncate">{m.league}</span>
+            </p>
+          )}
         </div>
         <span className="glow-soft grid h-8 w-8 shrink-0 place-items-center rounded-full bg-neon text-ink">
           <Play className="h-3.5 w-3.5 fill-ink" />
