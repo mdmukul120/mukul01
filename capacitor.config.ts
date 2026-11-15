@@ -1,8 +1,7 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 // APP_URL = your deployed site (e.g. https://mukul-plus.vercel.app).
-// The app loads it inside a WebView so the /api/* functions (youtube, stream, proxy) keep working
-// and every Vercel deploy updates the app instantly. If APP_URL is empty the bundled build (dist) is used.
+// When empty, bundled dist/ runs natively with encrypted endpoint vault + CapacitorHttp.
 const url = (process.env.APP_URL || "").trim();
 
 const config: CapacitorConfig = {
@@ -10,7 +9,15 @@ const config: CapacitorConfig = {
   appName: "Mukul Plus",
   webDir: "dist",
   backgroundColor: "#040a06",
-  android: { allowMixedContent: true },
+  plugins: {
+    CapacitorHttp: {
+      enabled: true,
+    },
+  },
+  android: {
+    allowMixedContent: true,
+    webContentsDebuggingEnabled: false,
+  },
   server: {
     androidScheme: "https",
     ...(url ? { url, cleartext: false } : {}),

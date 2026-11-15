@@ -5,10 +5,12 @@ export const config = { runtime: "edge" };
 
 const ALLOWED = [
   /^mukul-ott\.ai\.studio$/,
+  /(^|\.)mukullive\.ai\.studio$/,
   /(^|\.)ctghall\.com$/,
   /\.workers\.dev$/,
   /^mukulsport1?\.vercel\.app$/,
   /^music45-api\.vercel\.app$/,
+  /(^|\.)elochkaigolochla\.com$/,
 ];
 
 export default async function handler(req) {

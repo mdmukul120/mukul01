@@ -1,3 +1,5 @@
+import { getVault } from "virtual:api-vault";
+
 // ───────────────────────── Shared helpers ─────────────────────────
 export interface PlaySource {
   label: string;
@@ -37,14 +39,31 @@ const cache = new Map<string, { t: number; v: unknown }>();
 const inflight = new Map<string, Promise<unknown>>();
 const proxyHosts = new Set<string>();
 
-const PROXIES = [
-  // our own Vercel edge function first (same-origin, no CORS problems), public proxies as a last resort
-  (u: string) => `/api/proxy?url=${encodeURIComponent(u)}`,
-  (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-  (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-];
+export function clearApiCache() {
+  cache.clear();
+  proxyHosts.clear();
+}
 
-async function timedFetch(u: string, ms = 20000): Promise<Response> {
+export function isNativeStandalone(): boolean {
+  if (typeof window === "undefined") return false;
+  const cap = (window as any).Capacitor;
+  if (!cap?.isNativePlatform?.()) return false;
+  return location.hostname === "localhost" || location.protocol === "capacitor:" || location.protocol === "file:";
+}
+
+function getProxies(): ((u: string) => string)[] {
+  const v = getVault();
+  if (isNativeStandalone()) {
+    return [(u: string) => `${v.px1}${encodeURIComponent(u)}`, (u: string) => `${v.px2}${encodeURIComponent(u)}`];
+  }
+  return [
+    (u: string) => `/api/proxy?url=${encodeURIComponent(u)}`,
+    (u: string) => `${v.px1}${encodeURIComponent(u)}`,
+    (u: string) => `${v.px2}${encodeURIComponent(u)}`,
+  ];
+}
+
+async function timedFetch(u: string, ms = 15000): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -56,17 +75,19 @@ async function timedFetch(u: string, ms = 20000): Promise<Response> {
   }
 }
 
-export const streamUrl = (u: string) => `/api/stream?url=${encodeURIComponent(u)}`;
+export const streamUrl = (u: string) =>
+  isNativeStandalone() ? u : `/api/stream?url=${encodeURIComponent(u)}`;
 
 async function request(url: string, proxy: boolean, as: "json" | "text") {
   const host = new URL(url).host;
   const attempts: string[] = [];
-  if (!(proxy && proxyHosts.has(host))) attempts.push(url);
-  if (proxy) PROXIES.forEach((p) => attempts.push(p(url)));
+  const native = isNativeStandalone();
+  if (native || !(proxy && proxyHosts.has(host))) attempts.push(url);
+  if (proxy) getProxies().forEach((p) => attempts.push(p(url)));
   let lastErr: unknown = new Error("Network error");
   for (let i = 0; i < attempts.length; i++) {
     try {
-      const r = await timedFetch(attempts[i], i === 0 ? 8000 : 25000);
+      const r = await timedFetch(attempts[i], i === 0 ? (native ? 12000 : 7000) : 15000);
       const data = as === "json" ? await r.json() : await r.text();
       if (attempts[i] !== url) proxyHosts.add(host);
       return data;
@@ -99,7 +120,7 @@ export async function getData<T>(
 export const isHlsUrl = (u: string) => /\.m3u8|\/hls|hls\?|\/live\?|playlist/i.test(u);
 
 // ───────────────────────── Mukul Plus (OTT) ─────────────────────────
-const OTT = "https://mukul-ott.ai.studio";
+const getOttBase = () => getVault().ott;
 
 export interface OttItem {
   slug: string;
@@ -127,18 +148,18 @@ const normOtt = (i: any): OttItem => ({
 });
 
 export async function ottCategories(): Promise<OttCategory[]> {
-  const d = await getData<any>(`${OTT}/api/categories`, { proxy: true, ttl: 30 * 60_000 });
+  const d = await getData<any>(`${getOttBase()}/api/categories`, { proxy: true, ttl: 30 * 60_000 });
   return d.categories || [];
 }
 
 export async function ottList(page: number, category?: string): Promise<OttItem[]> {
   const q = `page=${page}` + (category ? `&category=${encodeURIComponent(category)}` : "");
-  const d = await getData<any>(`${OTT}/api/movies?${q}`, { proxy: true });
+  const d = await getData<any>(`${getOttBase()}/api/movies?${q}`, { proxy: true });
   return (d.items || []).map(normOtt);
 }
 
 export async function ottSearch(q: string): Promise<OttItem[]> {
-  const d = await getData<any>(`${OTT}/api/search?q=${encodeURIComponent(q)}`, { proxy: true });
+  const d = await getData<any>(`${getOttBase()}/api/search?q=${encodeURIComponent(q)}`, { proxy: true });
   return (d.items || []).map(normOtt);
 }
 
@@ -191,7 +212,7 @@ export interface OttDetail {
 }
 
 export async function ottDetail(slug: string): Promise<OttDetail> {
-  const d = await getData<any>(`${OTT}/api/movie/${slug}`, { proxy: true, ttl: 2 * 60_000 });
+  const d = await getData<any>(`${getOttBase()}/api/movie/${slug}`, { proxy: true, ttl: 2 * 60_000 });
   return {
     ...d,
     title: decode(d.title),
@@ -208,7 +229,7 @@ export async function ottDetail(slug: string): Promise<OttDetail> {
   };
 }
 
-export const ottAbs = (p?: string) => (!p ? "" : p.startsWith("http") ? p : OTT + p);
+export const ottAbs = (p?: string) => (!p ? "" : p.startsWith("http") ? p : getOttBase() + p);
 
 export const isMkvUrl = (u = "") => /\.mkv(\?|$)|matroska/i.test(decodeURIComponent(u));
 
@@ -231,7 +252,7 @@ export function ottPlaySources(s: OttSource): PlaySource[] {
 }
 
 // ───────────────────────── CTGHall ─────────────────────────
-const CTG = "https://www.ctghall.com";
+const getCtgBase = () => getVault().ctg;
 
 export const CTG_LIBS = [
   { id: 1, name: "ইংলিশ" },
@@ -261,31 +282,25 @@ export interface CtgMovie {
 export const ctgTitle = (t?: string) => decode((t || "").replace(/\+/g, " "));
 export const ctgImg = (p?: string | null, size = "w342") =>
   p ? `https://image.tmdb.org/t/p/${size}${p}` : "";
-export const ctgVideo = (u?: string) => (u ? CTG + encodeURI(u) : "");
+export const ctgVideo = (u?: string) => (u ? getCtgBase() + encodeURI(u) : "");
 
 export async function ctgList(lib: number, page: number) {
   const f = "id,title,original_title,year,poster_path,release_date,rating,online_rating";
   const d = await getData<any>(
-    `${CTG}/api/movies?library=${lib}&page=${page}&limit=30&fields=${f}&sort=createdAt&sort_order=DESC`
+    `${getCtgBase()}/api/movies?library=${lib}&page=${page}&limit=30&fields=${f}&sort=createdAt&sort_order=DESC`
   );
   return { data: (d.data || []) as CtgMovie[], pages: (d.pages || 1) as number };
 }
 
 export async function ctgSearch(q: string): Promise<CtgMovie[]> {
-  const d = await getData<any>(`${CTG}/api/search?search=${encodeURIComponent(q)}`);
+  const d = await getData<any>(`${getCtgBase()}/api/search?search=${encodeURIComponent(q)}`);
   const arr = (Array.isArray(d) ? d : d.data || []) as any[];
   return arr.filter((x) => x.url && (!x.type || x.type === "movie")).slice(0, 60);
 }
 
-export const ctgDetail = (id: number) => getData<CtgMovie>(`${CTG}/api/movies/${id}`, { ttl: 120_000 });
+export const ctgDetail = (id: number) => getData<CtgMovie>(`${getCtgBase()}/api/movies/${id}`, { ttl: 120_000 });
 
 // ───────────────────────── Bongo ─────────────────────────
-const BONGO_SCRAPE = "https://hamyra-api.mdibrahimkhalil516.workers.dev/bongo/scrape";
-const BONGO_HLS = [
-  "https://hamyra-api.aininjaibrahim.workers.dev/bongo/hls",
-  "https://hamyra-api.mdibrahimkhalil516.workers.dev/bongo/hls",
-];
-
 export interface BongoItem {
   id: string;
   title: string;
@@ -303,17 +318,17 @@ export interface BongoCategory {
 }
 
 export async function bongoScrape(): Promise<BongoCategory[]> {
-  const d = await getData<any>(BONGO_SCRAPE, { ttl: 10 * 60_000 });
+  const d = await getData<any>(getVault().bongoScrape, { ttl: 10 * 60_000 });
   const cats = (d.categories || []) as BongoCategory[];
   return cats.map((c) => ({ ...c, items: c.items.map((i) => ({ ...i, title: decode(i.title) })) }));
 }
 
-export const bongoSources = (id: string): PlaySource[] =>
-  BONGO_HLS.map((b, i) => ({ label: `সার্ভার ${i + 1}`, url: `${b}?id=${id}`, hls: true }));
+export const bongoSources = (id: string): PlaySource[] => {
+  const v = getVault();
+  return [v.bongoHls1, v.bongoHls2].map((b, i) => ({ label: `সার্ভার ${i + 1}`, url: `${b}?id=${id}`, hls: true }));
+};
 
-// ───────────────────────── Movie Catalog (mapi.elochkaigolochla.com) ─────────────────────────
-export const CATALOG_API = "https://mapi.elochkaigolochla.com/api/v1/catalog";
-
+// ───────────────────────── Movie Catalog ─────────────────────────
 export interface CatalogPlayer {
   url: string;
   translator: string;
@@ -357,28 +372,30 @@ export const CATALOG_CATEGORY_NAMES: Record<number, string> = {
 };
 
 export async function fetchMovieCatalog(): Promise<CatalogCategory[]> {
-  try {
-    const res = await fetch("/api/catalog");
-    if (res.ok) {
-      const d = await res.json();
-      const list = (d.result?.full || []) as CatalogCategory[];
-      if (list.length > 0) {
-        return list.map((c) => ({
-          ...c,
-          bnName: CATALOG_CATEGORY_NAMES[c.id] || c.name,
-          movies: (c.movies || []).map((m) => ({
-            ...m,
-            title_en: decode(m.title_en || m.title_ru),
-            title_ru: decode(m.title_ru || m.title_en),
-          })),
-        }));
+  if (!isNativeStandalone()) {
+    try {
+      const res = await fetch("/api/catalog");
+      if (res.ok) {
+        const d = await res.json();
+        const list = (d.result?.full || []) as CatalogCategory[];
+        if (list.length > 0) {
+          return list.map((c) => ({
+            ...c,
+            bnName: CATALOG_CATEGORY_NAMES[c.id] || c.name,
+            movies: (c.movies || []).map((m) => ({
+              ...m,
+              title_en: decode(m.title_en || m.title_ru),
+              title_ru: decode(m.title_ru || m.title_en),
+            })),
+          }));
+        }
       }
+    } catch {
+      // fallback to getData/proxy
     }
-  } catch {
-    // fallback to getData/proxy
   }
 
-  const d = await getData<any>(CATALOG_API, { proxy: true, ttl: 15 * 60_000 });
+  const d = await getData<any>(getVault().catalog, { proxy: true, ttl: 15 * 60_000 });
   const list = (d?.result?.full || []) as CatalogCategory[];
   return list.map((c) => ({
     ...c,
@@ -418,6 +435,8 @@ export interface Highlight {
   rail: string;
   thumbnail: string;
   sources: PlaySource[];
+  ytId?: string;
+  ytVideo?: YtVideo;
 }
 
 const pickUrl = (s: any): string =>
@@ -475,7 +494,7 @@ function collectHighlights(d: any): Highlight[] {
 }
 
 export async function sportsMatches(): Promise<SportMatch[]> {
-  const d = await getData<any>("https://mukulsport1.vercel.app/api/matches", { ttl: 30_000 });
+  const d = await getData<any>(getVault().sports1, { ttl: 30_000 });
   return (d.matches || []).map((m: any) => ({
     id: String(m.id),
     title: decode(m.name),
@@ -489,7 +508,7 @@ export async function sportsMatches(): Promise<SportMatch[]> {
 }
 
 export async function sportsFeed(): Promise<{ matches: SportMatch[]; highlights: Highlight[] }> {
-  const d = await getData<any>("https://mukulsport.vercel.app/api/feed/streams.json", { ttl: 30_000 });
+  const d = await getData<any>(getVault().sports2, { ttl: 30_000 });
   const map = (m: any, status: string): SportMatch => ({
     id: String(m.id),
     title: decode(m.title),
@@ -507,7 +526,7 @@ export async function sportsFeed(): Promise<{ matches: SportMatch[]; highlights:
 }
 
 export async function sportsMukulLive(): Promise<SportMatch[]> {
-  const d = await getData<any>("https://mukullive.ai.studio/api/matches", { ttl: 30_000 });
+  const d = await getData<any>(getVault().sports3, { ttl: 30_000 });
   return (d.matches || []).map((m: any) => {
     const servers: PlaySource[] = [];
     const pushSrv = (srv: PlaySource) => {
@@ -561,6 +580,37 @@ export async function sportsMukulLive(): Promise<SportMatch[]> {
   });
 }
 
+async function ytHighlights(): Promise<Highlight[]> {
+  try {
+    const [cr, fb] = await Promise.allSettled([
+      ytList("cricket match highlights"),
+      ytList("football match highlights"),
+    ]);
+    const list: Highlight[] = [];
+    const seen = new Set<string>();
+    const add = (items: YtVideo[], rail: string) => {
+      items.slice(0, 10).forEach((v) => {
+        if (!v.id || seen.has(v.id)) return;
+        seen.add(v.id);
+        list.push({
+          id: "yt-" + v.id,
+          title: v.title,
+          rail,
+          thumbnail: v.thumb,
+          sources: [{ label: "YouTube", url: v.id }],
+          ytId: v.id,
+          ytVideo: v,
+        });
+      });
+    };
+    if (cr.status === "fulfilled") add(cr.value.items, "ক্রিকেট হাইলাইটস");
+    if (fb.status === "fulfilled") add(fb.value.items, "ফুটবল হাইলাইটস");
+    return list;
+  } catch {
+    return [];
+  }
+}
+
 export interface SportsData {
   matches: SportMatch[];
   highlights: Highlight[];
@@ -593,10 +643,14 @@ export async function loadSports(): Promise<SportsData> {
     ex.start = ex.start || m.start;
   });
   const matches = [...byKey.values()];
+  let highlights = b.status === "fulfilled" ? b.value.highlights : [];
+  if (!highlights.length) {
+    highlights = await ytHighlights();
+  }
   return {
     matches,
-    highlights: b.status === "fulfilled" ? b.value.highlights : [],
-    highlightsError: b.status === "rejected",
+    highlights,
+    highlightsError: b.status === "rejected" && highlights.length === 0,
   };
 }
 
@@ -636,12 +690,12 @@ export function parseM3U(text: string): Channel[] {
 }
 
 export async function liveChannels(): Promise<Channel[]> {
-  const t = await getData<string>(`${OTT}/api/iptv/live.m3u`, { proxy: true, as: "text", ttl: 10 * 60_000 });
+  const t = await getData<string>(`${getOttBase()}/api/iptv/live.m3u`, { proxy: true, as: "text", ttl: 10 * 60_000 });
   return parseM3U(t);
 }
 
 // ───────────────────────── Music ─────────────────────────
-const MUSIC = "https://music45-api.vercel.app/api";
+const getMusicBase = () => getVault().music;
 
 export interface Song {
   id: string;
@@ -680,12 +734,12 @@ export function songUrl(s: Song, q = "160kbps"): string {
 }
 
 export async function musicSongs(q: string, limit = 40): Promise<Song[]> {
-  const d = await getData<any>(`${MUSIC}/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`);
+  const d = await getData<any>(`${getMusicBase()}/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`);
   return (d.data?.results || []).map(normSong).filter((s: Song) => s.urls.length);
 }
 
 export async function musicPlaylists(q: string, limit = 20): Promise<PlaylistCard[]> {
-  const d = await getData<any>(`${MUSIC}/search/playlists?query=${encodeURIComponent(q)}&limit=${limit}`);
+  const d = await getData<any>(`${getMusicBase()}/search/playlists?query=${encodeURIComponent(q)}&limit=${limit}`);
   return (d.data?.results || []).map((p: any) => ({
     id: p.id,
     name: decode(p.name),
@@ -695,7 +749,7 @@ export async function musicPlaylists(q: string, limit = 20): Promise<PlaylistCar
 }
 
 export async function musicPlaylist(id: string) {
-  const d = await getData<any>(`${MUSIC}/playlists?id=${id}&page=1&limit=60`);
+  const d = await getData<any>(`${getMusicBase()}/playlists?id=${id}&page=1&limit=60`);
   const p = d.data;
   return {
     id: p.id as string,
@@ -735,7 +789,7 @@ export async function downloadFile(url: string, name: string): Promise<boolean> 
   return false;
 }
 
-// ───────────────────────── YouTube (Data API v3 via /api/youtube) ─────────────────────────
+// ───────────────────────── YouTube (Data API v3 via /api/youtube or vault) ─────────────────────────
 export interface YtVideo {
   id: string;
   title: string;
@@ -752,26 +806,19 @@ export interface YtPage {
   next: string | null;
 }
 
-export const YOUTUBE_PLAYER_API_KEY = "AIzaSyDCU8hByM-4DrUqRUYnGn-3llEO78bcxq8";
-export const YOUTUBE_INNERTUBE_URL = `https://youtubei.googleapis.com/youtubei/v1/player?key=${YOUTUBE_PLAYER_API_KEY}`;
-
-const CLIENT_KEYS = [
-  YOUTUBE_PLAYER_API_KEY,
-  (import.meta as any).env?.VITE_YT_KEY as string | undefined,
-  "AIzaSyDaP1ZosCkptk4CgfPa4XoPc3aV2CA05z4",
-  "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-].filter(Boolean) as string[];
 export const YT_PAGE = 24;
 
 async function ytDirect(q: string, pageToken: string | undefined): Promise<YtPage> {
+  const vlt = getVault();
+  const keys = [...(vlt.ytKeys || []), (import.meta as any).env?.VITE_YT_KEY as string | undefined].filter(Boolean) as string[];
   const call = async (path: string, params: Record<string, string | undefined>) => {
     let msg = "";
-    for (const key of CLIENT_KEYS) {
+    for (const key of keys) {
       const cleanParams: Record<string, string> = { key };
       for (const [k, v] of Object.entries(params)) {
         if (v !== undefined) cleanParams[k] = v;
       }
-      const r = await fetch(`https://www.googleapis.com/youtube/v3/${path}?${new URLSearchParams(cleanParams)}`, {
+      const r = await fetch(`${vlt.ytV3}/${path}?${new URLSearchParams(cleanParams)}`, {
         referrerPolicy: "origin",
       });
       const d = await r.json().catch(() => ({}));
@@ -812,19 +859,21 @@ async function ytDirect(q: string, pageToken: string | undefined): Promise<YtPag
 export async function ytList(q: string, pageToken?: string): Promise<YtPage> {
   const qs = new URLSearchParams({ q, region: "BD", ...(pageToken ? { pageToken } : {}) });
   let first = "";
-  try {
-    const r = await fetch(`/api/youtube?${qs}`);
-    const d = await r.json();
-    if (!r.ok || d.error) throw new Error(d?.error || `HTTP ${r.status}`);
-    if (Array.isArray(d.items)) return d as YtPage;
-    throw new Error("অপ্রত্যাশিত রেসপন্স");
-  } catch (e: any) {
-    first = e?.message || "server error";
+  if (!isNativeStandalone()) {
+    try {
+      const r = await fetch(`/api/youtube?${qs}`);
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d?.error || `HTTP ${r.status}`);
+      if (Array.isArray(d.items)) return d as YtPage;
+      throw new Error("অপ্রত্যাশিত রেসপন্স");
+    } catch (e: any) {
+      first = e?.message || "server error";
+    }
   }
   try {
     return await ytDirect(q, pageToken);
   } catch (e: any) {
-    throw new Error(`${e?.message || "YouTube API error"} (সার্ভার: ${first})`);
+    throw new Error(`${e?.message || "YouTube API error"}${first ? ` (সার্ভার: ${first})` : ""}`);
   }
 }
 
@@ -881,21 +930,22 @@ export interface YtPlayerData {
 }
 
 export async function ytInnerTubePlayer(videoId: string): Promise<YtPlayerData> {
-  // Try server proxy first
-  try {
-    const res = await fetch(`/api/youtubei/player?id=${encodeURIComponent(videoId)}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && (data.formats?.length || data.adaptiveFormats?.length || data.hlsManifestUrl || data.title)) {
-        return data as YtPlayerData;
+  if (!isNativeStandalone()) {
+    try {
+      const res = await fetch(`/api/youtubei/player?id=${encodeURIComponent(videoId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && (data.formats?.length || data.adaptiveFormats?.length || data.hlsManifestUrl || data.title)) {
+          return data as YtPlayerData;
+        }
       }
+    } catch {
+      // fallback to direct InnerTube request
     }
-  } catch {
-    // fallback to direct InnerTube request
   }
 
-  // Direct client request to InnerTube Player endpoint with user key
-  const r = await fetch(YOUTUBE_INNERTUBE_URL, {
+  const vlt = getVault();
+  const r = await fetch(`${vlt.ytInner}?key=${vlt.ytKeys[0]}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -924,4 +974,20 @@ export async function ytInnerTubePlayer(videoId: string): Promise<YtPlayerData> 
     hlsManifestUrl: d.streamingData?.hlsManifestUrl,
     playabilityStatus: d.playabilityStatus?.status || "OK",
   };
+}
+
+// ───────────────────────── Weather ─────────────────────────
+export async function fetchWeatherData<T = any>(q: string): Promise<T> {
+  if (!isNativeStandalone()) {
+    try {
+      const r = await fetch(`/api/wx?q=${encodeURIComponent(q)}`);
+      if (r.ok) return (await r.json()) as T;
+    } catch {
+      // fallback to vault
+    }
+  }
+  const vlt = getVault();
+  const r = await fetch(`${vlt.wx}?key=${vlt.wxKey}&q=${encodeURIComponent(q)}&days=3&aqi=yes&alerts=no`);
+  if (!r.ok) throw new Error("আবহাওয়ার তথ্য পাওয়া যায়নি");
+  return (await r.json()) as T;
 }

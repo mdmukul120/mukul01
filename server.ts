@@ -147,8 +147,18 @@ const shapeYt = (v: any) => ({
 
 async function startServer() {
   const app = express();
+  app.disable("x-powered-by");
 
-  // CORS headers for all /api endpoints
+  const rateMap = new Map<string, number[]>();
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), payment=()");
+    next();
+  });
+
+  // CORS + sliding-window rate limit for all /api endpoints
   app.use("/api", (req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
@@ -157,6 +167,15 @@ async function startServer() {
       res.sendStatus(204);
       return;
     }
+    const ip = req.ip || req.socket.remoteAddress || "anon";
+    const now = Date.now();
+    const hits = (rateMap.get(ip) || []).filter((t) => now - t < 15_000);
+    if (hits.length > 180) {
+      res.status(429).json({ error: "too many requests" });
+      return;
+    }
+    hits.push(now);
+    rateMap.set(ip, hits);
     next();
   });
 
@@ -427,6 +446,27 @@ async function startServer() {
       });
       if (!response.ok) throw new Error("HTTP " + response.status);
       const data = await response.json();
+      res.setHeader("cache-control", "public, s-maxage=300, stale-while-revalidate=600");
+      res.json(data);
+    } catch (e: any) {
+      res.status(502).json({ error: String(e?.message || e) });
+    }
+  });
+
+  // GET /api/wx (Weather gateway)
+  app.get("/api/wx", async (req: Request, res: Response) => {
+    const q = ((req.query.q as string) || "Dhaka").trim();
+    const key = process.env.WEATHER_API_KEY || "241e16270ce941668ad100110231508";
+    try {
+      const url = `https://api.weatherapi.com/v1/forecast.json?key=${key}&q=${encodeURIComponent(q)}&days=3&aqi=yes&alerts=no`;
+      const response = await fetch(url, {
+        headers: { "user-agent": UA, accept: "application/json" },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        res.status(response.status).json(data);
+        return;
+      }
       res.setHeader("cache-control", "public, s-maxage=300, stale-while-revalidate=600");
       res.json(data);
     } catch (e: any) {

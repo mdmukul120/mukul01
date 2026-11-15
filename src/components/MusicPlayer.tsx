@@ -42,11 +42,12 @@ export function MiniPlayer() {
             e.stopPropagation();
             next();
           }}
-          className="grid h-9 w-9 place-items-center text-white/80 active:scale-90"
+          aria-label="পরের গান"
+          className="grid h-10 w-10 place-items-center text-mute hover:text-neon active:scale-90"
         >
           <SkipForward className="h-5 w-5 fill-current" />
         </button>
-        <div className="absolute inset-x-0 bottom-0 h-[2px] bg-white/10">
+        <div className="absolute inset-x-0 bottom-0 h-[2px] bg-line/60">
           <div className="h-full bg-neon" style={{ width: pct + "%" }} />
         </div>
       </div>

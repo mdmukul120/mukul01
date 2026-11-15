@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Play } from "lucide-react";
 import { loadSports, type Highlight, type SportMatch } from "../lib/api";
 import { makeSports } from "../lib/related";
@@ -9,8 +9,8 @@ function HlCard({ h, wide, onPlay }: { h: Highlight; wide?: boolean; onPlay: (h:
   return (
     <button onClick={() => onPlay(h)} className={`${wide ? "w-full" : "w-[72%] max-w-[300px] shrink-0 snap-start"} text-left active:scale-[0.96] transition`}>
       <div className="card-edge relative aspect-video overflow-hidden rounded-[22px] bg-surface2">
-        {h.thumbnail && <img src={h.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover" />}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+        {h.thumbnail && <img src={h.thumbnail} alt={h.title} loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover" />}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/65 to-transparent" />
         <span className="glow-soft absolute bottom-2.5 left-2.5 grid h-9 w-9 place-items-center rounded-full bg-neon text-ink">
           <Play className="h-4 w-4 fill-ink" />
         </span>
@@ -21,18 +21,34 @@ function HlCard({ h, wide, onPlay }: { h: Highlight; wide?: boolean; onPlay: (h:
 }
 
 export default function Sports() {
-  const { play, toast } = useApp();
+  const { play, toast, openDetail } = useApp();
   const { data, error, loading, reload } = useAsync(loadSports, []);
   const [filter, setFilter] = useState("all");
+  const [sportType, setSportType] = useState("all");
 
-  const live = data?.matches.filter((m) => m.status === "live") || [];
-  const upcoming = data?.matches.filter((m) => m.status !== "live") || [];
+  const sportNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    (data?.matches || []).forEach((m) => {
+      const s = (m.sport || "").trim();
+      if (s) counts.set(s, (counts.get(s) || 0) + 1);
+    });
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+  }, [data]);
+
+  const filteredMatches = useMemo(() => {
+    const list = data?.matches || [];
+    if (sportType === "all") return list;
+    return list.filter((m) => (m.sport || "").toLowerCase() === sportType.toLowerCase());
+  }, [data, sportType]);
+
+  const live = filteredMatches.filter((m) => m.status === "live");
+  const upcoming = filteredMatches.filter((m) => m.status !== "live");
   const hl = data?.highlights || [];
 
   const groups = new Map<string, Highlight[]>();
   hl.forEach((h) => groups.set(h.rail, [...(groups.get(h.rail) || []), h]));
 
-  const S = data ? makeSports(data, play, toast) : null;
+  const S = data ? makeSports(data, play, toast, openDetail) : null;
   const playMatch = (m: SportMatch) => S?.playMatch(m);
   const playHl = (h: Highlight) => S?.playHighlight(h);
 
@@ -53,7 +69,18 @@ export default function Sports() {
           { id: "hl", label: "হাইলাইটস", count: hl.length },
         ]}
       />
-      {loading && <Loading label="ম্যাচ লোড হচ্ছে…" />}
+      {filter !== "hl" && sportNames.length > 1 && (
+        <Chips
+          className="pt-0"
+          value={sportType}
+          onChange={setSportType}
+          items={[
+            { id: "all", label: "সব খেলা" },
+            ...sportNames.map((s) => ({ id: s, label: s })),
+          ]}
+        />
+      )}
+      {loading && <Loading label="ম্যাচ ও হাইলাইটস লোড হচ্ছে…" />}
       {error && <ErrorState message={error} onRetry={reload} />}
       {data && (
         <>
@@ -107,7 +134,7 @@ export default function Sports() {
 
           {showHl && (
             <>
-              {data.highlightsError && <ErrorState message="হাইলাইটস ফিড লোড হয়নি" onRetry={reload} />}
+              {data.highlightsError && hl.length === 0 && <ErrorState message="হাইলাইটস ফিড লোড হয়নি" onRetry={reload} />}
               {!data.highlightsError && hl.length === 0 && <p className="panel mx-5 mt-6 rounded-2xl p-5 text-center text-sm text-mute">এখনো কোনো হাইলাইটস নেই</p>}
               {filter === "hl" ? (
                 [...groups.entries()].map(([rail, list]) => (

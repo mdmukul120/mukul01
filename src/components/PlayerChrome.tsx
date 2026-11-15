@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, Check, Maximize2, Minimize2, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, Check, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, Volume2, VolumeX } from "lucide-react";
 import { Spinner } from "./ui";
 import { cn } from "../utils/cn";
 
@@ -73,6 +73,8 @@ export interface ChromeProps {
   muted: boolean;
   isFull: boolean;
   onBack: () => void;
+  onMinimize?: () => void;
+  onPip?: () => void;
   onToggle: () => void;
   onSeek: (t: number) => void;
   onMute: () => void;
@@ -81,7 +83,7 @@ export interface ChromeProps {
   menuOpen?: boolean;
 }
 
-/** Custom control overlay shared by the HLS/MP4 player and the YouTube player. */
+/** Custom control overlay shared by the HLS/MP4/DASH player. */
 export function Chrome(p: ChromeProps) {
   const [visible, setVisible] = useState(true);
   const [flash, setFlash] = useState<"" | "back" | "fwd">("");
@@ -132,7 +134,7 @@ export function Chrome(p: ChromeProps) {
       <div className="absolute inset-0" onPointerUp={onSurface} />
 
       {flash && (
-        <div className={cn("pointer-events-none absolute top-1/2 grid h-16 w-16 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-xs font-bold", flash === "back" ? "left-[14%]" : "right-[14%]")}>
+        <div className={cn("pointer-events-none absolute top-1/2 grid h-16 w-16 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-xs font-bold text-white", flash === "back" ? "left-[14%]" : "right-[14%]")}>
           {flash === "back" ? "−10s" : "+10s"}
         </div>
       )}
@@ -141,7 +143,7 @@ export function Chrome(p: ChromeProps) {
         <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-transparent to-black/80" />
 
         {/* top bar */}
-        <div className="absolute inset-x-0 top-0 z-30 flex items-center gap-3 px-3 pt-3 pointer-events-auto">
+        <div className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex items-center gap-2.5 px-3 pt-3">
           <button
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
@@ -153,8 +155,8 @@ export function Chrome(p: ChromeProps) {
               e.stopPropagation();
               p.onBack();
             }}
-            aria-label="ফিরে যান"
-            className="grid h-10 w-10 place-items-center rounded-full bg-black/60 backdrop-blur shadow-lg text-white active:scale-90 transition hover:bg-black/80"
+            aria-label="বন্ধ করুন"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur transition hover:bg-black/80 active:scale-90"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
@@ -163,16 +165,31 @@ export function Chrome(p: ChromeProps) {
             {p.subtitle && <p className="truncate text-[11px] text-white/70">{p.subtitle}</p>}
           </div>
           {p.live && (
-            <span className="flex items-center gap-1.5 rounded-full bg-live px-2.5 py-1 text-[10px] font-extrabold tracking-wider">
+            <span className="flex items-center gap-1.5 rounded-full bg-live px-2.5 py-1 text-[10px] font-extrabold tracking-wider text-white">
               <span className="h-1.5 w-1.5 rounded-full bg-white" /> LIVE
             </span>
+          )}
+          {p.onMinimize && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                p.onMinimize?.();
+              }}
+              aria-label="ফ্লোটিং প্লেয়ার"
+              title="ফ্লোটিং প্লেয়ার"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur transition hover:bg-neon hover:text-ink active:scale-90"
+            >
+              <PictureInPicture2 className="h-4.5 w-4.5" />
+            </button>
           )}
         </div>
 
         {/* center */}
         <div className={cn("absolute inset-0 flex items-center justify-center gap-8", visible && "pointer-events-auto")}>
           {canSeek && (
-            <button onClick={() => skip(-10)} className="grid h-11 w-11 place-items-center rounded-full bg-black/45 backdrop-blur active:scale-90">
+            <button onClick={() => skip(-10)} className="grid h-11 w-11 place-items-center rounded-full bg-black/45 text-white backdrop-blur active:scale-90">
               <RotateCcw className="h-5 w-5" />
             </button>
           )}
@@ -180,7 +197,7 @@ export function Chrome(p: ChromeProps) {
             {p.loading ? <Spinner className="h-7 w-7 !text-ink" /> : p.playing ? <Pause className="h-7 w-7 fill-ink" /> : <Play className="ml-0.5 h-7 w-7 fill-ink" />}
           </button>
           {canSeek && (
-            <button onClick={() => skip(10)} className="grid h-11 w-11 place-items-center rounded-full bg-black/45 backdrop-blur active:scale-90">
+            <button onClick={() => skip(10)} className="grid h-11 w-11 place-items-center rounded-full bg-black/45 text-white backdrop-blur active:scale-90">
               <RotateCw className="h-5 w-5" />
             </button>
           )}
@@ -189,7 +206,7 @@ export function Chrome(p: ChromeProps) {
         {/* bottom */}
         <div className={cn("absolute inset-x-0 bottom-0 px-4 pb-3", visible && "pointer-events-auto")}>
           <div className="flex items-center gap-3">
-            <span className="w-11 text-[11px] font-semibold tabular-nums">{p.live ? "LIVE" : fmtTime(p.cur)}</span>
+            <span className="w-11 text-[11px] font-semibold tabular-nums text-white">{p.live ? "LIVE" : fmtTime(p.cur)}</span>
             <input
               type="range"
               className="seek h-[5px] min-w-0 flex-1 disabled:opacity-60"
@@ -207,12 +224,17 @@ export function Chrome(p: ChromeProps) {
             <span className="w-11 text-right text-[11px] font-semibold tabular-nums text-white/70">{canSeek ? fmtTime(p.dur) : ""}</span>
           </div>
           <div className="mt-2 flex items-center justify-between">
-            <button onClick={p.onMute} className="grid h-9 w-9 place-items-center rounded-full bg-white/10 backdrop-blur active:scale-90">
+            <button onClick={p.onMute} className="grid h-10 w-10 place-items-center rounded-full bg-white/10 text-white backdrop-blur active:scale-90">
               {p.muted ? <VolumeX className="h-[18px] w-[18px]" /> : <Volume2 className="h-[18px] w-[18px]" />}
             </button>
             <div className="flex items-center gap-2">
               {p.extras}
-              <button onClick={p.onFullscreen} className="grid h-9 w-9 place-items-center rounded-full bg-white/10 backdrop-blur active:scale-90">
+              {p.onPip && (
+                <button onClick={p.onPip} aria-label="সিস্টেম PiP" title="সিস্টেম PiP" className="grid h-10 w-10 place-items-center rounded-full bg-white/10 text-white backdrop-blur active:scale-90">
+                  <PictureInPicture2 className="h-[17px] w-[17px]" />
+                </button>
+              )}
+              <button onClick={p.onFullscreen} className="grid h-10 w-10 place-items-center rounded-full bg-white/10 text-white backdrop-blur active:scale-90">
                 {p.isFull ? <Minimize2 className="h-[18px] w-[18px]" /> : <Maximize2 className="h-[18px] w-[18px]" />}
               </button>
             </div>

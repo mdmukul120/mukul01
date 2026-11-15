@@ -75,15 +75,15 @@ export default function Movies() {
           {(
             [
               ["catalog", "ক্যাটালগ"],
-              ["ctg", "CTGHall"],
-              ["bongo", "Bongo"],
+              ["ctg", "Mukul Movie"],
+              ["bongo", "মুকুল ড্রামা"],
             ] as [Src, string][]
           ).map(([id, label]) => (
             <button
               key={id}
               onClick={() => setSrc(id)}
               className={cn(
-                "rounded-full py-2 text-[12px] sm:text-[13px] font-bold transition text-center truncate px-2",
+                "min-h-[44px] rounded-full py-2 text-[12px] sm:text-[13px] font-bold transition text-center truncate px-2",
                 src === id ? "glow-soft bg-neon text-ink" : "text-mute"
               )}
             >
@@ -121,7 +121,7 @@ function CtgBrowse() {
   }, [input]);
   return (
     <>
-      <SearchBar value={input} onChange={setInput} onSubmit={() => setQuery(input.trim())} placeholder="CTGHall-এ মুভি খুঁজুন…" />
+      <SearchBar value={input} onChange={setInput} onSubmit={() => setQuery(input.trim())} placeholder="Mukul Movie-তে মুভি খুঁজুন…" />
       {!query && <Chips value={lib} onChange={setLib} items={CTG_LIBS.map((l) => ({ id: l.id, label: l.name }))} />}
       <div className="mt-2">
         {items.length === 0 && loading && <Skeletons />}
@@ -166,7 +166,7 @@ function BongoBrowse() {
 
   return (
     <>
-      <SearchBar value={q} onChange={setQ} placeholder="Bongo কনটেন্ট খুঁজুন…" />
+      <SearchBar value={q} onChange={setQ} placeholder="মুকুল ড্রামা খুঁজুন…" />
       {data && <Chips value={cat} onChange={setCat} items={[{ id: "all", label: "সব" }, ...data.map((c) => ({ id: c.key, label: c.title.split("·")[0].trim(), count: c.items.length }))]} />}
       <div className="mt-2">
         {loading && <Skeletons />}

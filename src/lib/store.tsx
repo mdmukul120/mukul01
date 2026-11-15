@@ -10,7 +10,7 @@ import {
 } from "react";
 import { songUrl, type BongoItem, type CatalogMovie, type PlayRequest, type Song, type YtVideo } from "./api";
 
-export type Tab = "home" | "movies" | "sports" | "live" | "music" | "youtube" | "weather";
+export type Tab = "home" | "movies" | "sports" | "live" | "music" | "youtube" | "weather" | "settings";
 export type Theme = "dark" | "light";
 
 export type Detail =
@@ -31,9 +31,26 @@ interface Ctx {
   req: PlayRequest | null;
   play: (r: PlayRequest) => void;
   closePlayer: () => void;
-  // youtube watch mode (for back button support)
+  videoMini: boolean;
+  setVideoMini: (v: boolean) => void;
+  videoPlaying: boolean;
+  setVideoPlaying: (v: boolean) => void;
+  // youtube watch mode (floating + background + back button support)
   ytWatch: YtVideo | null;
   setYtWatch: (v: YtVideo | null) => void;
+  ytMini: boolean;
+  setYtMini: (v: boolean) => void;
+  ytPlaying: boolean;
+  setYtPlaying: (v: boolean) => void;
+  // floating & background playback + widgets preferences
+  bgPlay: boolean;
+  setBgPlay: (v: boolean) => void;
+  showWidgets: boolean;
+  setShowWidgets: (v: boolean) => void;
+  registerVideoToggle: (fn: (() => void) | null) => void;
+  toggleActiveVideo: () => void;
+  registerYtToggle: (fn: (() => void) | null) => void;
+  toggleActiveYt: () => void;
   // detail stack
   detail: Detail | null;
   openDetail: (d: Detail) => void;
@@ -60,6 +77,9 @@ interface Ctx {
   toggleLike: (s: Song) => void;
   favCh: string[];
   toggleFavCh: (name: string) => void;
+  defaultCity: string;
+  setDefaultCity: (city: string) => void;
+  clearFavorites: () => void;
   toast: (m: string) => void;
   toastMsg: string;
 }
@@ -93,13 +113,44 @@ function useLocal<T>(key: string, init: T): [T, (v: T) => void] {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [tab, setTabState] = useState<Tab>("home");
   const [req, setReq] = useState<PlayRequest | null>(null);
-  const [ytWatch, setYtWatch] = useState<YtVideo | null>(null);
+  const [videoMini, setVideoMini] = useState(false);
+  const [videoPlaying, setVideoPlaying] = useState(false);
+  const [ytWatch, setYtWatchState] = useState<YtVideo | null>(null);
+  const [ytMini, setYtMini] = useState(false);
+  const [ytPlaying, setYtPlaying] = useState(false);
   const [details, setDetails] = useState<Detail[]>([]);
   const [fullOpen, setFull] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [quality, setQuality] = useLocal<string>("q", "160kbps");
   const [liked, setLiked] = useLocal<Song[]>("liked", []);
   const [favCh, setFavCh] = useLocal<string[]>("favch", []);
+  const [bgPlay, setBgPlay] = useLocal<boolean>("bg_play", true);
+  const [showWidgets, setShowWidgets] = useLocal<boolean>("show_widgets", true);
+  const [defaultCity, setDefaultCityState] = useState<string>(() => {
+    try {
+      return localStorage.getItem("weather_city") || "Dhaka";
+    } catch {
+      return "Dhaka";
+    }
+  });
+  const setDefaultCity = useCallback((city: string) => {
+    const clean = city.trim() || "Dhaka";
+    setDefaultCityState(clean);
+    try {
+      localStorage.setItem("weather_city", clean);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const clearFavorites = useCallback(() => {
+    setLiked([]);
+    setFavCh([]);
+    try {
+      localStorage.removeItem("weather_recent");
+    } catch {
+      /* ignore */
+    }
+  }, [setLiked, setFavCh]);
 
   // Theme management with localStorage persistence
   const [theme, setThemeState] = useState<Theme>(() => {
@@ -148,6 +199,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   qualityRef.current = quality;
   const toastTimer = useRef<number | undefined>(undefined);
 
+  const videoToggleRef = useRef<(() => void) | null>(null);
+  const ytToggleRef = useRef<(() => void) | null>(null);
+  const registerVideoToggle = useCallback((fn: (() => void) | null) => {
+    videoToggleRef.current = fn;
+  }, []);
+  const toggleActiveVideo = useCallback(() => {
+    videoToggleRef.current?.();
+  }, []);
+  const registerYtToggle = useCallback((fn: (() => void) | null) => {
+    ytToggleRef.current = fn;
+  }, []);
+  const toggleActiveYt = useCallback(() => {
+    ytToggleRef.current?.();
+  }, []);
+
   const toast = useCallback((m: string) => {
     setToastMsg(m);
     window.clearTimeout(toastTimer.current);
@@ -157,8 +223,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ── references for back-button handling ──
   const reqRef = useRef<PlayRequest | null>(null);
   reqRef.current = req;
+  const videoMiniRef = useRef(false);
+  videoMiniRef.current = videoMini;
   const ytWatchRef = useRef<YtVideo | null>(null);
   ytWatchRef.current = ytWatch;
+  const ytMiniRef = useRef(false);
+  ytMiniRef.current = ytMini;
+  const bgPlayRef = useRef(true);
+  bgPlayRef.current = bgPlay;
   const fullRef = useRef(false);
   fullRef.current = fullOpen;
   const detailsRef = useRef<Detail[]>([]);
@@ -167,7 +239,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
   tabRef.current = tab;
   const lastBackPress = useRef<number>(0);
 
+  const setYtWatch = useCallback((v: YtVideo | null) => {
+    if (v) {
+      audioRef.current?.pause();
+      setReq(null);
+      setVideoMini(false);
+      setYtMini(false);
+    } else {
+      setYtMini(false);
+      setYtPlaying(false);
+    }
+    setYtWatchState(v);
+  }, []);
+
   const setTab = useCallback((t: Tab) => {
+    if (tabRef.current === "youtube" && t !== "youtube" && ytWatchRef.current) {
+      if (bgPlayRef.current) {
+        setYtMini(true);
+      } else {
+        setYtWatchState(null);
+        setYtMini(false);
+        setYtPlaying(false);
+      }
+    }
+    if (reqRef.current && !videoMiniRef.current && bgPlayRef.current) {
+      setVideoMini(true);
+    }
     setTabState(t);
   }, []);
 
@@ -188,16 +285,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // 2. Video Player modal open -> close it
-      if (reqRef.current) {
-        setReq(null);
+      // 2. Expanded Video Player modal open -> minimize to floating if bgPlay enabled, else close
+      if (reqRef.current && !videoMiniRef.current) {
+        if (bgPlayRef.current) {
+          setVideoMini(true);
+        } else {
+          setReq(null);
+        }
         history.pushState({ app: true, depth: 1 }, "");
         return;
       }
 
-      // 3. YouTube Watch modal open -> close it
-      if (ytWatchRef.current) {
-        setYtWatch(null);
+      // 3. Expanded YouTube Watch modal open -> minimize to floating if bgPlay enabled, else close
+      if (ytWatchRef.current && !ytMiniRef.current) {
+        if (bgPlayRef.current) {
+          setYtMini(true);
+        } else {
+          setYtWatchState(null);
+          setYtMini(false);
+        }
         history.pushState({ app: true, depth: 1 }, "");
         return;
       }
@@ -216,17 +322,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // 6. If currently on any sub-tab (movies, sports, tv, music, youtube, weather), go to home
+      // 6. If currently on any sub-tab (movies, sports, tv, music, youtube, weather, settings), go to home
       if (tabRef.current !== "home") {
-        setTabState("home");
+        setTab("home");
         history.pushState({ app: true, depth: 1 }, "");
         return;
       }
 
-      // 7. On home tab with nothing open: require double tap within 2.5s to exit
+      // 7. On home tab with nothing expanded: require double tap within 2.5s to exit
       const now = Date.now();
       if (now - lastBackPress.current < 2500) {
-        // Allow app exit on native Android if inside Capacitor
         if (typeof window !== "undefined" && (window as any).Capacitor?.isNativePlatform?.()) {
           import("@capacitor/app").then(({ App }) => App.exitApp()).catch(() => undefined);
         }
@@ -239,7 +344,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     window.addEventListener("popstate", onPop);
 
-    // Register Capacitor native Android hardware back button listener
     let capSub: { remove: () => void } | null = null;
     if (typeof window !== "undefined" && (window as any).Capacitor?.isNativePlatform?.()) {
       import("@capacitor/app")
@@ -257,10 +361,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("popstate", onPop);
       capSub?.remove();
     };
-  }, [toast]);
+  }, [toast, setTab]);
 
   const play = useCallback((r: PlayRequest) => {
     audioRef.current?.pause();
+    setYtWatchState(null);
+    setYtMini(false);
+    setYtPlaying(false);
+    setVideoMini(false);
     setReq(r);
   }, []);
 
@@ -268,6 +376,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
       (document.exitFullscreen?.() ?? (document as any).webkitExitFullscreen?.())?.catch(() => undefined);
     }
+    setVideoMini(false);
+    setVideoPlaying(false);
     setReq(null);
   }, []);
 
@@ -354,6 +464,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const playQueue = useCallback(
     (songs: Song[], idx: number) => {
+      // Minimize expanded video if bgPlay, or leave music to lead audio playback
+      if (videoToggleRef.current && reqRef.current) {
+        setVideoMini(true);
+      }
       queueRef.current = songs;
       setQueue(songs);
       loadIndex(idx);
@@ -395,8 +509,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       req,
       play,
       closePlayer,
+      videoMini,
+      setVideoMini,
+      videoPlaying,
+      setVideoPlaying,
       ytWatch,
       setYtWatch,
+      ytMini,
+      setYtMini,
+      ytPlaying,
+      setYtPlaying,
+      bgPlay,
+      setBgPlay,
+      showWidgets,
+      setShowWidgets,
+      registerVideoToggle,
+      toggleActiveVideo,
+      registerYtToggle,
+      toggleActiveYt,
       detail: details[details.length - 1] || null,
       openDetail,
       closeDetail,
@@ -421,6 +551,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toggleLike,
       favCh,
       toggleFavCh,
+      defaultCity,
+      setDefaultCity,
+      clearFavorites,
       toast,
       toastMsg,
     }),
@@ -428,7 +561,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       tab,
       theme,
       req,
+      videoMini,
+      videoPlaying,
       ytWatch,
+      ytMini,
+      ytPlaying,
+      bgPlay,
+      showWidgets,
       details,
       queue,
       index,
@@ -439,12 +578,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       quality,
       liked,
       favCh,
+      defaultCity,
       toastMsg,
       setTab,
       setTheme,
       toggleTheme,
       play,
       closePlayer,
+      setYtWatch,
+      setBgPlay,
+      setShowWidgets,
+      registerVideoToggle,
+      toggleActiveVideo,
+      registerYtToggle,
+      toggleActiveYt,
       openDetail,
       closeDetail,
       playQueue,
@@ -457,6 +604,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setQuality,
       toggleLike,
       toggleFavCh,
+      setDefaultCity,
+      clearFavorites,
       toast,
     ]
   );

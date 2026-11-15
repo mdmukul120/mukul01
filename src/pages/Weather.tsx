@@ -15,10 +15,9 @@ import {
   Umbrella,
   Wind,
 } from "lucide-react";
+import { fetchWeatherData } from "../lib/api";
 import { useApp } from "../lib/store";
 import { cn } from "../utils/cn";
-
-const API_KEY = "241e16270ce941668ad100110231508";
 
 interface WeatherData {
   location: {
@@ -356,7 +355,13 @@ export default function Weather() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [input, setInput] = useState("");
-  const [query, setQuery] = useState("Dhaka");
+  const [query, setQuery] = useState(() => {
+    try {
+      return localStorage.getItem("weather_city") || "Dhaka";
+    } catch {
+      return "Dhaka";
+    }
+  });
   const [recentSearches, setRecentSearches] = useState<Array<{ name: string; temp: number; text: string }>>(() => {
     try {
       const s = localStorage.getItem("weather_recent");
@@ -391,12 +396,7 @@ export default function Weather() {
       setLoading(true);
       setError("");
       try {
-        // days=3 for free tier compatibility with WeatherAPI
-        const res = await fetch(
-          `https://api.weatherapi.com/v1/forecast.json?key=${API_KEY}&q=${encodeURIComponent(q)}&days=3&aqi=yes&alerts=no`
-        );
-        if (!res.ok) throw new Error("আবহাওয়ার তথ্য পাওয়া যায়নি");
-        const json: WeatherData = await res.json();
+        const json = await fetchWeatherData<WeatherData>(q);
         setData(json);
         saveRecent(json);
       } catch (e: any) {

@@ -5,6 +5,7 @@ import { useApp } from "../lib/store";
 import { makeSports } from "../lib/related";
 import { Footer, MatchTile, PosterCard, Rail, useAsync } from "../components/ui";
 import { Art } from "../components/MusicPlayer";
+import { AppWidget, WeatherWidget } from "../components/Widgets";
 import { cn } from "../utils/cn";
 
 interface HeroItem {
@@ -135,7 +136,7 @@ function Hero({ items }: { items: HeroItem[] }) {
 }
 
 export default function Home() {
-  const { setTab, openDetail, play, toast } = useApp();
+  const { setTab, openDetail, play, toast, showWidgets } = useApp();
   const ctg = useAsync(() => ctgList(1, 1), []);
   const bongo = useAsync(bongoScrape, []);
   const pls = useAsync(() => musicPlaylists("Hindi top hits", 12), []);
@@ -146,7 +147,7 @@ export default function Home() {
   const upcoming = sports.data?.matches.filter((m) => m.status !== "live") || [];
   const highlights = sports.data?.highlights || [];
 
-  const S = sports.data ? makeSports(sports.data, play, toast) : null;
+  const S = sports.data ? makeSports(sports.data, play, toast, openDetail) : null;
   const playMatch = (m: SportMatch) => S?.playMatch(m);
 
   const heroItems = useMemo<HeroItem[]>(() => {
@@ -204,6 +205,13 @@ export default function Home() {
         <div className="mx-5 mt-6 h-[330px] animate-pulse rounded-[28px] bg-surface2" />
       )}
 
+      {showWidgets && (
+        <div className="mt-5 grid grid-cols-1 gap-4 px-5 md:grid-cols-2">
+          <AppWidget liveCount={live.length} />
+          <WeatherWidget />
+        </div>
+      )}
+
       {live.length > 0 && (
         <Rail title="লাইভ ম্যাচসমূহ" count={live.length} dot="live">
           {live.map((m) => (
@@ -255,7 +263,7 @@ export default function Home() {
       )}
 
       {bongo.data && (
-        <Rail title="নাটক ও ওয়েব সিরিজ">
+        <Rail title="মুকুল ড্রামা ও ওয়েব সিরিজ">
           {bongo.data
             .find((c) => c.key === "drama")
             ?.items.slice(0, 14)
@@ -266,7 +274,7 @@ export default function Home() {
       )}
 
       {ctg.data && (
-        <Rail title="নতুন সংযোজন">
+        <Rail title="Mukul Movie · নতুন সংযোজন">
           {ctg.data.data.map((m) => (
             <PosterCard
               key={m.id}

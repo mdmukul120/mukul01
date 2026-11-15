@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
 import shaka from "shaka-player";
-import { ArrowLeft, Copy, Download, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Copy, Download, ExternalLink, Maximize2, Pause, PictureInPicture2, Play, RefreshCw, TriangleAlert, X } from "lucide-react";
 import { useApp } from "../lib/store";
 import { isHlsUrl, isMkvUrl, streamUrl, type PlaySource } from "../lib/api";
 import { cn } from "../utils/cn";
@@ -44,7 +44,7 @@ function buildAttempts(sources: PlaySource[]): Attempt[] {
 }
 
 export default function VideoPlayer() {
-  const { req, closePlayer, toast } = useApp();
+  const { req, closePlayer, videoMini, setVideoMini, setVideoPlaying, registerVideoToggle, bgPlay, toast } = useApp();
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -62,10 +62,20 @@ export default function VideoPlayer() {
   const [level, setLevel] = useState("-1");
   const [speed, setSpeed] = useState("1");
   const [menuOpen, setMenuOpen] = useState(false);
-  // "native" = the browser's own <video controls> (how it worked before the custom controller).
   const [native, setNative] = useState(false);
   const nativeRef = useRef(false);
   nativeRef.current = native;
+
+  // Floating drag offset state
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dragState = useRef<{ active: boolean; moved: boolean; startX: number; startY: number; origX: number; origY: number }>({
+    active: false,
+    moved: false,
+    startX: 0,
+    startY: 0,
+    origX: 0,
+    origY: 0,
+  });
 
   const attempts = useMemo(() => (req ? buildAttempts(req.sources) : []), [req]);
   const att = attempts[step];
@@ -78,7 +88,75 @@ export default function VideoPlayer() {
     setSpeed("1");
     setCur(0);
     setDur(0);
+    setDragOffset({ x: 0, y: 0 });
   }, [req]);
+
+  useEffect(() => {
+    setVideoPlaying(playing);
+  }, [playing, setVideoPlaying]);
+
+  const toggle = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) v.play().catch(() => undefined);
+    else v.pause();
+  }, []);
+
+  useEffect(() => {
+    if (!req) {
+      registerVideoToggle(null);
+      return;
+    }
+    registerVideoToggle(toggle);
+    return () => registerVideoToggle(null);
+  }, [req, toggle, registerVideoToggle]);
+
+  // System MediaSession for background playback & lock-screen controls
+  useEffect(() => {
+    if (!req || !("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: req.title,
+        artist: req.subtitle || (req.live ? "Mukul Plus Live" : "Mukul Plus"),
+        artwork: req.poster ? [{ src: req.poster, sizes: "512x512", type: "image/jpeg" }] : [],
+      });
+      navigator.mediaSession.setActionHandler("play", () => videoRef.current?.play().catch(() => undefined));
+      navigator.mediaSession.setActionHandler("pause", () => videoRef.current?.pause());
+      if (!req.live) {
+        navigator.mediaSession.setActionHandler("seekbackward", (d) => {
+          if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - (d.seekOffset || 10));
+        });
+        navigator.mediaSession.setActionHandler("seekforward", (d) => {
+          if (videoRef.current) videoRef.current.currentTime = videoRef.current.currentTime + (d.seekOffset || 10);
+        });
+      }
+    } catch {
+      /* unsupported browser */
+    }
+  }, [req]);
+
+  useEffect(() => {
+    if (!req || !("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    } catch {
+      /* ignore */
+    }
+  }, [req, playing]);
+
+  // Keep playing seamlessly in background if bgPlay enabled
+  useEffect(() => {
+    if (!req) return;
+    const onVis = () => {
+      const v = videoRef.current;
+      if (!v) return;
+      if (document.hidden && !bgPlay && !v.paused) {
+        v.pause();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [req, bgPlay]);
 
   useEffect(() => {
     const f = () => setIsFull(!!document.fullscreenElement || !!(document as any).webkitFullscreenElement);
@@ -189,8 +267,6 @@ export default function VideoPlayer() {
       v.play().catch(() => undefined);
     }
 
-    // slow servers / big MKV files need time to load metadata — never time out in native mode,
-    // and otherwise only give up when the browser has stopped loading altogether.
     const timer = window.setTimeout(() => {
       if (dead || nativeRef.current) return;
       if (v.readyState < 2 && v.networkState !== 2) fail();
@@ -223,12 +299,6 @@ export default function VideoPlayer() {
 
   if (!req || !att) return null;
 
-  const toggle = () => {
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.paused) v.play().catch(() => undefined);
-    else v.pause();
-  };
   const fullscreen = async () => {
     const el = wrapRef.current as any;
     try {
@@ -247,7 +317,29 @@ export default function VideoPlayer() {
       toast("ফুলস্ক্রিন সাপোর্ট করছে না");
     }
   };
-  // original (non-proxied) link, for opening in VLC / MX Player when the browser can't decode the file
+
+  const requestSystemPip = async () => {
+    const v = videoRef.current as any;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (v?.requestPictureInPicture) {
+        await v.requestPictureInPicture();
+      } else {
+        setVideoMini(true);
+      }
+    } catch {
+      setVideoMini(true);
+    }
+  };
+
+  const minimizeToFloating = () => {
+    if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+      (document.exitFullscreen?.() ?? (document as any).webkitExitFullscreen?.())?.catch(() => undefined);
+    }
+    setVideoMini(true);
+  };
+
   const rawUrl = req.sources.find((x) => /^https?:/.test(x.url))?.url || "";
   const isMkv = req.sources.some((x) => isMkvUrl(x.url));
   const isAndroid = /android/i.test(navigator.userAgent);
@@ -261,7 +353,7 @@ export default function VideoPlayer() {
     else {
       navigator.clipboard?.writeText(rawUrl).then(
         () => toast("লিংক কপি হয়েছে — VLC → Open Network Stream-এ পেস্ট করুন"),
-        () => window.open(rawUrl, "_blank")
+        () => toast("এক্সটার্নাল লিংক: " + rawUrl.slice(0, 48))
       );
     }
   };
@@ -271,6 +363,37 @@ export default function VideoPlayer() {
       setStep(n);
       toast("সার্ভার পরিবর্তন হয়েছে");
     } else toast("আর কোনো সার্ভার নেই");
+  };
+
+  // Pointer drag handlers for floating mode
+  const onFloatDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!videoMini) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragState.current = {
+      active: true,
+      moved: false,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: dragOffset.x,
+      origY: dragOffset.y,
+    };
+  };
+  const onFloatMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dragState.current;
+    if (!d.active) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) d.moved = true;
+    const maxW = Math.max(80, window.innerWidth - 230);
+    const maxH = Math.max(80, window.innerHeight - 180);
+    setDragOffset({
+      x: Math.max(-maxW, Math.min(12, d.origX + dx)),
+      y: Math.max(-maxH, Math.min(20, d.origY + dy)),
+    });
+  };
+  const onFloatUp = () => {
+    dragState.current.active = false;
   };
 
   const extras = (
@@ -316,131 +439,224 @@ export default function VideoPlayer() {
   );
 
   return (
-    <div className="absolute inset-0 z-[70] overflow-y-auto bg-ink animate-[fadeIn_.2s_ease]">
-      {/* full-bleed player, pinned while the list scrolls */}
-      <div ref={wrapRef} className="sticky top-0 z-20 mx-auto aspect-video w-full bg-black lg:max-w-[880px]">
+    <div
+      className={cn(
+        videoMini
+          ? "fixed bottom-24 right-3 z-[75] w-[224px] sm:w-[280px] lg:bottom-6 lg:right-6 touch-none select-none"
+          : "absolute inset-0 z-[70] overflow-y-auto bg-ink animate-[fadeIn_.2s_ease]"
+      )}
+      style={videoMini ? { transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` } : undefined}
+      onPointerDown={onFloatDown}
+      onPointerMove={onFloatMove}
+      onPointerUp={onFloatUp}
+      onPointerCancel={onFloatUp}
+    >
+      {/* Tree-stable player wrapper: preserves HLS/SHAKA/MP4 buffer across float <-> expand */}
+      <div
+        ref={wrapRef}
+        className={cn(
+          videoMini
+            ? "glow-ring relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-2xl"
+            : "sticky top-0 z-20 mx-auto aspect-video w-full bg-black lg:max-w-[880px]"
+        )}
+      >
         <video
           ref={videoRef}
           className="absolute inset-0 h-full w-full bg-black object-contain"
           playsInline
           autoPlay
           poster={req.poster}
-          controls={native}
+          controls={native && !videoMini}
           onContextMenu={(e) => e.preventDefault()}
         />
-        {native && (
-          <button
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onTouchEnd={(e) => {
-              e.stopPropagation();
-              closePlayer();
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              closePlayer();
-            }}
-            aria-label="ফিরে যান"
-            className="absolute left-3 top-3 z-30 grid h-10 w-10 place-items-center rounded-full bg-black/75 text-white backdrop-blur shadow-lg active:scale-90 hover:bg-black"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-        )}
-        {status !== "error" && !native && (
-          <Chrome
-            title={req.title}
-            subtitle={req.subtitle}
-            live={req.live}
-            playing={playing}
-            loading={buffering}
-            cur={cur}
-            dur={dur}
-            muted={muted}
-            isFull={isFull}
-            menuOpen={menuOpen}
-            onBack={closePlayer}
-            onToggle={toggle}
-            onSeek={(t) => videoRef.current && (videoRef.current.currentTime = t)}
-            onMute={() => videoRef.current && (videoRef.current.muted = !videoRef.current.muted)}
-            onFullscreen={fullscreen}
-            extras={extras}
-          />
-        )}
-        {status === "error" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/90 p-4 text-center">
-            <TriangleAlert className="h-9 w-9 text-amber-400" />
-            <p className="text-sm font-semibold">এই সার্ভারে ভিডিও চালানো যাচ্ছে না</p>
-            <p className="text-[11px] text-mute">অন্য সার্ভার বেছে নিন অথবা আবার চেষ্টা করুন।</p>
-            {!native && (
-              <button
-                onClick={() => {
-                  setNative(true);
-                  setStep(0);
-                  setTick((t) => t + 1);
-                }}
-                className="card-edge rounded-full bg-surface2 px-5 py-2 text-xs font-bold text-neon active:scale-95"
-              >
-                ডিফল্ট ব্রাউজার প্লেয়ারে চালান
-              </button>
-            )}
-            <button
-              onClick={() => {
-                setStep(0);
-                setTick((t) => t + 1);
-              }}
-              className="glow-soft flex items-center gap-2 rounded-full bg-neon px-5 py-2 text-xs font-bold text-ink active:scale-95"
-            >
-              <RefreshCw className="h-3.5 w-3.5" /> আবার চেষ্টা
-            </button>
-            {rawUrl && (
-              <div className="flex flex-wrap justify-center gap-2">
-                <button onClick={openExternal} className="card-edge flex items-center gap-1.5 rounded-full bg-surface2 px-4 py-2 text-[11px] font-bold text-neon active:scale-95">
-                  {isAndroid || isIOS ? <ExternalLink className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  {isAndroid ? "MX Player / VLC-এ চালান" : isIOS ? "VLC-এ চালান" : "VLC-এর জন্য লিংক কপি"}
-                </button>
-                <a href={rawUrl} target="_blank" rel="noopener noreferrer" download className="card-edge flex items-center gap-1.5 rounded-full bg-surface2 px-4 py-2 text-[11px] font-bold text-white active:scale-95">
-                  <Download className="h-3.5 w-3.5" /> ডাউনলোড
-                </a>
-              </div>
-            )}
-            {isMkv && <p className="max-w-[300px] text-[10px] leading-snug text-mute">MKV ফাইলের অডিও/ভিডিও কোডেক (HEVC, AC3, DTS) ব্রাউজার সাপোর্ট করে না — অন্য প্লেয়ারে চালালে ঠিকমতো চলবে।</p>}
-            <button onClick={closePlayer} className="text-[11px] text-mute underline">
-              ফিরে যান
-            </button>
-          </div>
-        )}
-      </div>
 
-      <div className="px-4 pt-4">
-        <h1 className="text-[17px] font-extrabold leading-snug">{req.title}</h1>
-        {req.subtitle && <p className="mt-0.5 text-xs text-mute">{req.subtitle}</p>}
-        <button
-          onClick={() => setNative((n) => !n)}
-          className="card-edge mt-3 rounded-full bg-surface2 px-4 py-2 text-[11px] font-semibold text-neon active:scale-95"
-        >
-          {native ? "কাস্টম কন্ট্রোলারে ফিরুন" : "ডিফল্ট ব্রাউজার প্লেয়ার"}
-        </button>
-        {req.sources.length > 1 && (
-          <>
-            <div className="no-scrollbar -mx-4 mt-4 flex gap-2 overflow-x-auto px-4 pb-1">
-              {req.sources.map((s, i) => (
-                <button
-                  key={s.url + i}
-                  onClick={() => setStep(attempts.findIndex((a) => a.si === i))}
-                  className={cn("shrink-0 rounded-full px-4 py-2 text-xs font-semibold active:scale-95", i === att.si ? "glow-soft bg-neon text-ink" : "card-edge bg-surface2 text-mute")}
-                >
-                  {s.label}
-                </button>
-              ))}
-              <button onClick={nextServer} className="card-edge shrink-0 rounded-full bg-surface2 px-4 py-2 text-xs font-semibold text-neon active:scale-95">
-                পরের সার্ভার →
+        {videoMini ? (
+          <div className="absolute inset-0 z-20 flex flex-col justify-between bg-gradient-to-b from-black/75 via-transparent to-black/80 p-2">
+            <div className="flex items-center justify-between gap-1">
+              <button
+                type="button"
+                onClick={() => setVideoMini(false)}
+                aria-label="বড় করুন"
+                title="বড় করুন"
+                className="grid h-8 w-8 place-items-center rounded-full bg-black/70 text-white active:scale-90 hover:bg-neon hover:text-ink"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </button>
+              <span className="truncate px-1 text-[10px] font-bold text-white/90">{req.title}</span>
+              <button
+                type="button"
+                onClick={closePlayer}
+                aria-label="বন্ধ করুন"
+                title="বন্ধ করুন"
+                className="grid h-8 w-8 place-items-center rounded-full bg-black/70 text-white active:scale-90 hover:bg-live"
+              >
+                <X className="h-4 w-4" />
               </button>
             </div>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={toggle}
+                aria-label={playing ? "পজ" : "প্লে"}
+                className="grid h-9 w-9 place-items-center rounded-full bg-neon text-ink shadow-md active:scale-90"
+              >
+                {playing ? <Pause className="h-4 w-4 fill-ink" /> : <Play className="h-4 w-4 fill-ink pl-0.5" />}
+              </button>
+              {req.live && <span className="rounded bg-live px-1.5 py-0.5 text-[9px] font-extrabold text-white">LIVE</span>}
+              <button
+                type="button"
+                onClick={requestSystemPip}
+                aria-label="সিস্টেম PiP"
+                title="সিস্টেম PiP"
+                className="grid h-8 w-8 place-items-center rounded-full bg-black/70 text-white active:scale-90"
+              >
+                <PictureInPicture2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {native && (
+              <div className="absolute inset-x-3 top-3 z-30 flex items-center justify-between pointer-events-none">
+                <button
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onTouchEnd={(e) => {
+                    e.stopPropagation();
+                    closePlayer();
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closePlayer();
+                  }}
+                  aria-label="ফিরে যান"
+                  className="pointer-events-auto grid h-10 w-10 place-items-center rounded-full bg-black/75 text-white backdrop-blur shadow-lg active:scale-90 hover:bg-black"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    minimizeToFloating();
+                  }}
+                  aria-label="ফ্লোটিং প্লেয়ার"
+                  className="pointer-events-auto grid h-10 w-10 place-items-center rounded-full bg-black/75 text-white backdrop-blur shadow-lg active:scale-90 hover:bg-neon hover:text-ink"
+                >
+                  <PictureInPicture2 className="h-4.5 w-4.5" />
+                </button>
+              </div>
+            )}
+            {status !== "error" && !native && (
+              <Chrome
+                title={req.title}
+                subtitle={req.subtitle}
+                live={req.live}
+                playing={playing}
+                loading={buffering}
+                cur={cur}
+                dur={dur}
+                muted={muted}
+                isFull={isFull}
+                menuOpen={menuOpen}
+                onBack={closePlayer}
+                onMinimize={minimizeToFloating}
+                onPip={requestSystemPip}
+                onToggle={toggle}
+                onSeek={(t) => videoRef.current && (videoRef.current.currentTime = t)}
+                onMute={() => videoRef.current && (videoRef.current.muted = !videoRef.current.muted)}
+                onFullscreen={fullscreen}
+                extras={extras}
+              />
+            )}
+            {status === "error" && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/90 p-4 text-center text-white">
+                <TriangleAlert className="h-9 w-9 text-amber-400" />
+                <p className="text-sm font-semibold">এই সার্ভারে ভিডিও চালানো যাচ্ছে না</p>
+                <p className="text-[11px] text-white/70">অন্য সার্ভার বেছে নিন অথবা আবার চেষ্টা করুন।</p>
+                {!native && (
+                  <button
+                    onClick={() => {
+                      setNative(true);
+                      setStep(0);
+                      setTick((t) => t + 1);
+                    }}
+                    className="card-edge rounded-full bg-surface2 px-5 py-2 text-xs font-bold text-neon active:scale-95"
+                  >
+                    ডিফল্ট ব্রাউজার প্লেয়ারে চালান
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setStep(0);
+                    setTick((t) => t + 1);
+                  }}
+                  className="glow-soft flex items-center gap-2 rounded-full bg-neon px-5 py-2 text-xs font-bold text-ink active:scale-95"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> আবার চেষ্টা
+                </button>
+                {rawUrl && (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <button onClick={openExternal} className="card-edge flex items-center gap-1.5 rounded-full bg-surface2 px-4 py-2 text-[11px] font-bold text-neon active:scale-95">
+                      {isAndroid || isIOS ? <ExternalLink className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                      {isAndroid ? "MX Player / VLC-এ চালান" : isIOS ? "VLC-এ চালান" : "VLC-এর জন্য লিংক কপি"}
+                    </button>
+                    <a href={rawUrl} target="_blank" rel="noopener noreferrer" download className="card-edge flex items-center gap-1.5 rounded-full bg-surface2 px-4 py-2 text-[11px] font-bold text-white active:scale-95">
+                      <Download className="h-3.5 w-3.5" /> ডাউনলোড
+                    </a>
+                  </div>
+                )}
+                {isMkv && <p className="max-w-[300px] text-[10px] leading-snug text-white/60">MKV ফাইলের অডিও/ভিডিও কোডেক (HEVC, AC3, DTS) ব্রাউজার সাপোর্ট করে না — অন্য প্লেয়ারে চালালে ঠিকমতো চলবে।</p>}
+                <button onClick={closePlayer} className="text-[11px] text-white/70 underline">
+                  ফিরে যান
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
 
-      {req.related && <Related items={req.related} />}
+      {!videoMini && (
+        <>
+          <div className="px-4 pt-4">
+            <h1 className="text-[17px] font-extrabold leading-snug">{req.title}</h1>
+            {req.subtitle && <p className="mt-0.5 text-xs text-mute">{req.subtitle}</p>}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                onClick={minimizeToFloating}
+                className="card-edge flex min-h-[40px] items-center gap-1.5 rounded-full bg-surface2 px-4 py-2 text-[11px] font-semibold text-neon active:scale-95"
+              >
+                <PictureInPicture2 className="h-3.5 w-3.5" /> ফ্লোটিং মোডে দেখুন
+              </button>
+              <button
+                onClick={() => setNative((n) => !n)}
+                className="card-edge min-h-[40px] rounded-full bg-surface2 px-4 py-2 text-[11px] font-semibold text-mute hover:text-neon active:scale-95"
+              >
+                {native ? "কাস্টম কন্ট্রোলারে ফিরুন" : "ডিফল্ট ব্রাউজার প্লেয়ার"}
+              </button>
+            </div>
+            {req.sources.length > 1 && (
+              <div className="no-scrollbar -mx-4 mt-4 flex gap-2 overflow-x-auto px-4 pb-1">
+                {req.sources.map((s, i) => (
+                  <button
+                    key={s.url + i}
+                    onClick={() => setStep(attempts.findIndex((a) => a.si === i))}
+                    className={cn("shrink-0 rounded-full px-4 py-2 text-xs font-semibold active:scale-95", i === att.si ? "glow-soft bg-neon text-ink" : "card-edge bg-surface2 text-mute")}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+                <button onClick={nextServer} className="card-edge shrink-0 rounded-full bg-surface2 px-4 py-2 text-xs font-semibold text-neon active:scale-95">
+                  পরের সার্ভার →
+                </button>
+              </div>
+            )}
+          </div>
+
+          {req.related && <Related items={req.related} />}
+        </>
+      )}
     </div>
   );
 }

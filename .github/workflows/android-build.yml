@@ -46,6 +46,7 @@ jobs:
             --splashBackgroundColor '#040a06' --splashBackgroundColorDark '#040a06'
           # version
           sed -i "s/versionCode [0-9]*/versionCode $VERSION_CODE/; s/versionName \"[^\"]*\"/versionName \"$VERSION_NAME\"/" android/app/build.gradle
+          node scripts/android-harden.mjs
           npx cap sync android
 
       - name: Build APK
