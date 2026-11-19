@@ -50,9 +50,13 @@ export function makeSports(
     return uniq([...same.map(hItem), ...rest.map(hItem)]);
   };
 
-  function playMatch(m: SportMatch) {
+  function playMatch(m: SportMatch, sourceIndex = 0) {
     if (!m.servers.length) return toast("এই ম্যাচের স্ট্রিম এখনো শুরু হয়নি");
-    play({ title: m.title, subtitle: m.league, poster: m.image, sources: m.servers, live: m.status === "live", related: relMatch(m) });
+    const ordered =
+      sourceIndex > 0 && sourceIndex < m.servers.length
+        ? [m.servers[sourceIndex], ...m.servers.filter((_, i) => i !== sourceIndex)]
+        : m.servers;
+    play({ title: m.title, subtitle: m.league, poster: m.image, sources: ordered, live: m.status === "live", related: relMatch(m) });
   }
 
   async function playHighlight(h: Highlight) {
@@ -71,7 +75,6 @@ export function makeSports(
             sources.push({
               label: f.qualityLabel || `সার্ভার ${idx + 1}`,
               url: f.url!,
-              noLocalProxy: true,
             });
           });
         if (sources.length) {

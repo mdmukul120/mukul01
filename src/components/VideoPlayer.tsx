@@ -17,29 +17,58 @@ interface Attempt {
   native: boolean;
 }
 
-/** Per server: direct → native HLS → same-origin proxy (fixes CORS / http / hotlink problems). */
+/** Per server: primary -> direct/altUrl -> local /api/stream (with headers & MPD rewriting) -> native fallback. */
 function buildAttempts(sources: PlaySource[]): Attempt[] {
   const out: Attempt[] = [];
+  const pushUnique = (a: Attempt) => {
+    if (!a.url) return;
+    if (!out.some((x) => x.si === a.si && x.url === a.url && x.native === a.native && x.dash === a.dash)) {
+      out.push(a);
+    }
+  };
+
   sources.forEach((s, si) => {
-    const dash = !!s.dash || /\.mpd(\?|$)/i.test(s.url);
-    const hls = !dash && (!!s.hls || isHlsUrl(s.url));
+    const dash = !!s.dash || /\.mpd(\?|$)/i.test(s.url) || (!!s.altUrl && /\.mpd(\?|$)/i.test(s.altUrl));
+    const hls = !dash && (!!s.hls || isHlsUrl(s.url) || (!!s.altUrl && isHlsUrl(s.altUrl)));
+
     if (dash) {
-      out.push({ si, url: s.url, hls: false, dash: true, clearKey: s.clearKey, native: false });
-      if (!s.noLocalProxy && !s.url.startsWith("http://")) {
-        out.push({ si, url: streamUrl(s.url), hls: false, dash: true, clearKey: s.clearKey, native: false });
+      if (!s.url.startsWith("http://")) {
+        pushUnique({ si, url: s.url, hls: false, dash: true, clearKey: s.clearKey, native: false });
+      }
+      if (s.altUrl && !s.altUrl.startsWith("http://")) {
+        pushUnique({ si, url: s.altUrl, hls: false, dash: true, clearKey: s.clearKey, native: false });
+      }
+      if (!s.noLocalProxy) {
+        const target = s.altUrl || s.url;
+        pushUnique({ si, url: streamUrl(target, s.headers), hls: false, dash: true, clearKey: s.clearKey, native: false });
       }
       return;
     }
+
     if (!s.url.startsWith("http://")) {
       if (hls) {
-        out.push({ si, url: s.url, hls, dash: false, native: false });
-        out.push({ si, url: s.url, hls, dash: false, native: true });
-      } else out.push({ si, url: s.url, hls, dash: false, native: true });
+        pushUnique({ si, url: s.url, hls: true, dash: false, native: false });
+        if (s.altUrl && !s.altUrl.startsWith("http://")) {
+          pushUnique({ si, url: s.altUrl, hls: true, dash: false, native: false });
+        }
+      } else {
+        pushUnique({ si, url: s.url, hls: false, dash: false, native: true });
+        if (s.altUrl && !s.altUrl.startsWith("http://")) {
+          pushUnique({ si, url: s.altUrl, hls: false, dash: false, native: true });
+        }
+      }
     }
+
     if (!s.noLocalProxy) {
-      out.push({ si, url: streamUrl(s.url), hls, dash: false, native: !hls });
+      const target = s.altUrl || s.url;
+      pushUnique({ si, url: streamUrl(target, s.headers), hls, dash: false, native: !hls });
+    }
+
+    if (hls && !s.url.startsWith("http://")) {
+      pushUnique({ si, url: s.url, hls: true, dash: false, native: true });
     }
   });
+
   return out;
 }
 
@@ -49,6 +78,8 @@ export default function VideoPlayer() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const shakaRef = useRef<shaka.Player | null>(null);
+  const shakaCleanupRef = useRef<Promise<void>>(Promise.resolve());
+  const emeBlockedRef = useRef(false);
   const [step, setStep] = useState(0);
   const [tick, setTick] = useState(0);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -177,13 +208,40 @@ export default function VideoPlayer() {
     let dashPlayer: shaka.Player | null = null;
     let dead = false;
 
-    const fail = () => {
-      if (dead) return;
-      if (step < attempts.length - 1) {
-        if (attempts[step + 1].si !== att.si) toast("পরবর্তী সার্ভারে চেষ্টা করা হচ্ছে…");
-        setStep(step + 1);
-      } else setStatus("error");
+    const nextStepIndex = (skipClearKey: boolean) => {
+      let idx = step + 1;
+      if (skipClearKey) {
+        while (idx < attempts.length && attempts[idx].dash && attempts[idx].clearKey) {
+          idx++;
+        }
+      }
+      return idx;
     };
+
+    const fail = (skipClearKey = false) => {
+      if (dead) return;
+      dead = true;
+      const next = nextStepIndex(skipClearKey);
+      if (next < attempts.length) {
+        if (attempts[next].si !== att.si) toast("পরবর্তী সার্ভারে চেষ্টা করা হচ্ছে…");
+        setStep(next);
+      } else {
+        setStatus("error");
+      }
+    };
+
+    const safePlay = () => {
+      if (dead) return;
+      v.play().catch((err: any) => {
+        if (dead) return;
+        if (err?.name === "NotAllowedError") {
+          v.muted = true;
+          setMuted(true);
+          v.play().catch(() => undefined);
+        }
+      });
+    };
+
     const ready = () => {
       if (dead) return;
       setStatus("ready");
@@ -200,11 +258,13 @@ export default function VideoPlayer() {
       if (!req?.live && list && list.length) list[Math.floor(Math.random() * list.length)].open();
     };
 
+    const onError = () => fail(false);
+
     v.addEventListener("playing", ready);
     v.addEventListener("playing", onPlay);
     v.addEventListener("loadeddata", ready);
     v.addEventListener("canplay", ready);
-    v.addEventListener("error", fail);
+    v.addEventListener("error", onError);
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("timeupdate", onTime);
@@ -215,62 +275,97 @@ export default function VideoPlayer() {
 
     if (att.dash) {
       hlsRef.current = null;
-      shaka.polyfill.installAll();
-      if (shaka.Player.isBrowserSupported()) {
-        dashPlayer = new shaka.Player();
-        shakaRef.current = dashPlayer;
-        if (att.clearKey && att.clearKey.includes(":")) {
-          const [kid, key] = att.clearKey.split(":");
-          if (kid && key) {
-            dashPlayer.configure({
-              drm: {
-                clearKeys: {
-                  [kid.toLowerCase()]: key.toLowerCase(),
-                },
-              },
-            });
-          }
-        }
-        dashPlayer.addEventListener("error", () => fail());
-        dashPlayer
-          .attach(v)
-          .then(() => (dashPlayer && !dead ? dashPlayer.load(att.url) : Promise.resolve()))
-          .then(() => {
-            if (dead || !dashPlayer) return;
-            const tracks = dashPlayer.getVariantTracks();
-            setLevels([...new Set(tracks.map((t) => t.height).filter((h): h is number => !!h))].sort((a, b) => b - a));
-            v.play().catch(() => undefined);
-          })
-          .catch(() => fail());
+      if (emeBlockedRef.current && att.clearKey && attempts.some((a, i) => i > step && !a.clearKey)) {
+        fail(true);
       } else {
-        fail();
+        (async () => {
+          await shakaCleanupRef.current;
+          if (dead) return;
+          shaka.polyfill.installAll();
+          if (!shaka.Player.isBrowserSupported()) {
+            fail(false);
+            return;
+          }
+          const player = new shaka.Player();
+          dashPlayer = player;
+          shakaRef.current = player;
+          if (att.clearKey && att.clearKey.includes(":")) {
+            const [kid, key] = att.clearKey.split(":");
+            if (kid && key) {
+              player.configure({
+                drm: {
+                  clearKeys: {
+                    [kid.toLowerCase()]: key.toLowerCase(),
+                  },
+                },
+              });
+            }
+          }
+          player.addEventListener("error", (ev: any) => {
+            const code = Number(ev?.detail?.code || 0);
+            const isDrm = code >= 6000 && code < 7000;
+            if (isDrm) emeBlockedRef.current = true;
+            fail(isDrm);
+          });
+          try {
+            await player.attach(v);
+            if (dead) return;
+            await player.load(att.url);
+            if (dead) return;
+            const tracks = player.getVariantTracks();
+            setLevels([...new Set(tracks.map((t) => t.height).filter((h): h is number => !!h))].sort((a, b) => b - a));
+            safePlay();
+          } catch (err: any) {
+            const code = Number(err?.code || 0);
+            const isDrm = (code >= 6000 && code < 7000) || /drm|eme|key|encrypted/i.test(String(err?.message || ""));
+            if (isDrm) emeBlockedRef.current = true;
+            fail(isDrm);
+          }
+        })();
       }
     } else if (att.hls && !att.native && Hls.isSupported()) {
       shakaRef.current = null;
-      hls = new Hls({ enableWorker: true, lowLatencyMode: false, maxBufferLength: 30 });
-      hlsRef.current = hls;
-      hls.loadSource(att.url);
-      hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, (_e, d) => {
-        setLevels([...new Set(d.levels.map((l) => l.height).filter(Boolean))].sort((a, b) => b - a));
-        v.play().catch(() => undefined);
-      });
-      hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (!data.fatal) return;
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hls) hls.recoverMediaError();
-        else fail();
-      });
+      (async () => {
+        await shakaCleanupRef.current;
+        if (dead) return;
+        hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          maxBufferLength: 30,
+          manifestLoadingTimeOut: 9000,
+          manifestLoadingMaxRetry: 1,
+          levelLoadingTimeOut: 9000,
+          fragLoadingTimeOut: 12000,
+        });
+        hlsRef.current = hls;
+        hls.loadSource(att.url);
+        hls.attachMedia(v);
+        hls.on(Hls.Events.MANIFEST_PARSED, (_e, d) => {
+          if (dead) return;
+          setLevels([...new Set(d.levels.map((l) => l.height).filter(Boolean))].sort((a, b) => b - a));
+          safePlay();
+        });
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (dead || !data.fatal) return;
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hls) hls.recoverMediaError();
+          else fail(false);
+        });
+      })();
     } else {
       hlsRef.current = null;
       shakaRef.current = null;
-      v.src = att.url;
-      v.play().catch(() => undefined);
+      (async () => {
+        await shakaCleanupRef.current;
+        if (dead) return;
+        v.src = att.url;
+        safePlay();
+      })();
     }
 
     const timer = window.setTimeout(() => {
       if (dead || nativeRef.current) return;
-      if (v.readyState < 2 && v.networkState !== 2) fail();
-    }, 40000);
+      if (v.readyState < 2) fail(false);
+    }, 12000);
 
     return () => {
       dead = true;
@@ -279,7 +374,7 @@ export default function VideoPlayer() {
       v.removeEventListener("playing", onPlay);
       v.removeEventListener("loadeddata", ready);
       v.removeEventListener("canplay", ready);
-      v.removeEventListener("error", fail);
+      v.removeEventListener("error", onError);
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
       v.removeEventListener("timeupdate", onTime);
@@ -289,10 +384,13 @@ export default function VideoPlayer() {
       v.removeEventListener("ended", onEnded);
       hls?.destroy();
       hlsRef.current = null;
-      dashPlayer?.destroy().catch(() => undefined);
-      shakaRef.current = null;
-      v.removeAttribute("src");
-      v.load();
+      if (dashPlayer) {
+        shakaCleanupRef.current = dashPlayer.destroy().catch(() => undefined);
+        shakaRef.current = null;
+      } else {
+        v.removeAttribute("src");
+        v.load();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, req, tick]);

@@ -179,7 +179,11 @@ function BongoBrowse() {
               title={m.title}
               badge={m.category}
               premium={m.premium}
-              onClick={() => openDetail({ t: "bongo", item: m })}
+              onClick={() => {
+                if (m.catalogMovie) openDetail({ t: "catalog", movie: m.catalogMovie });
+                else if (m.ytVideo) openDetail({ t: "yt", video: m.ytVideo });
+                else openDetail({ t: "bongo", item: m });
+              }}
             />
           ))}
         </Grid>

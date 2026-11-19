@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, Radio } from "lucide-react";
-import { bongoScrape, ctgImg, ctgList, ctgTitle, fetchMovieCatalog, fmtStart, loadSports, musicPlaylists, type CatalogMovie, type SportMatch } from "../lib/api";
+import { bongoScrape, ctgImg, ctgList, ctgTitle, fetchMovieCatalog, fmtStart, loadSports, musicPlaylists, type BongoItem, type CatalogMovie, type SportMatch } from "../lib/api";
 import { useApp } from "../lib/store";
 import { makeSports } from "../lib/related";
 import { Footer, MatchTile, PosterCard, Rail, useAsync } from "../components/ui";
 import { Art } from "../components/MusicPlayer";
-import { AppWidget, WeatherWidget } from "../components/Widgets";
 import { cn } from "../utils/cn";
 
 interface HeroItem {
@@ -136,7 +135,7 @@ function Hero({ items }: { items: HeroItem[] }) {
 }
 
 export default function Home() {
-  const { setTab, openDetail, play, toast, showWidgets } = useApp();
+  const { setTab, openDetail, play, toast } = useApp();
   const ctg = useAsync(() => ctgList(1, 1), []);
   const bongo = useAsync(bongoScrape, []);
   const pls = useAsync(() => musicPlaylists("Hindi top hits", 12), []);
@@ -205,13 +204,6 @@ export default function Home() {
         <div className="mx-5 mt-6 h-[330px] animate-pulse rounded-[28px] bg-surface2" />
       )}
 
-      {showWidgets && (
-        <div className="mt-5 grid grid-cols-1 gap-4 px-5 md:grid-cols-2">
-          <AppWidget liveCount={live.length} />
-          <WeatherWidget />
-        </div>
-      )}
-
       {live.length > 0 && (
         <Rail title="লাইভ ম্যাচসমূহ" count={live.length} dot="live">
           {live.map((m) => (
@@ -262,16 +254,33 @@ export default function Home() {
         </Rail>
       )}
 
-      {bongo.data && (
-        <Rail title="মুকুল ড্রামা ও ওয়েব সিরিজ">
-          {bongo.data
-            .find((c) => c.key === "drama")
-            ?.items.slice(0, 14)
-            .map((m) => (
-              <PosterCard key={m.id} className="w-[118px] shrink-0 snap-start" image={m.thumbnail} title={m.title} premium={m.premium} onClick={() => openDetail({ t: "bongo", item: m })} />
+      {bongo.data && bongo.data.length > 0 ? (
+        <Rail title="Mukul Drama" count={bongo.data.find((c) => c.key === "drama")?.items.length || bongo.data[0]?.items.length}>
+          {(bongo.data.find((c) => c.key === "drama")?.items || bongo.data.flatMap((c) => c.items))
+            .slice(0, 16)
+            .map((m: BongoItem) => (
+              <PosterCard
+                key={m.id}
+                className="w-[118px] shrink-0 snap-start"
+                image={m.thumbnail}
+                title={m.title}
+                badge={m.category}
+                premium={m.premium}
+                onClick={() => {
+                  if (m.catalogMovie) openDetail({ t: "catalog", movie: m.catalogMovie });
+                  else if (m.ytVideo) openDetail({ t: "yt", video: m.ytVideo });
+                  else openDetail({ t: "bongo", item: m });
+                }}
+              />
             ))}
         </Rail>
-      )}
+      ) : bongo.loading ? (
+        <Rail title="Mukul Drama">
+          {[0, 1, 2, 3].map((k) => (
+            <div key={k} className="w-[118px] shrink-0 snap-start aspect-[2/3] animate-pulse rounded-2xl bg-surface2" />
+          ))}
+        </Rail>
+      ) : null}
 
       {ctg.data && (
         <Rail title="Mukul Movie · নতুন সংযোজন">

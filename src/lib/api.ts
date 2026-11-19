@@ -4,6 +4,8 @@ import { getVault } from "virtual:api-vault";
 export interface PlaySource {
   label: string;
   url: string;
+  altUrl?: string;
+  headers?: Record<string, string>;
   hls?: boolean;
   dash?: boolean;
   clearKey?: string | null;
@@ -75,8 +77,11 @@ async function timedFetch(u: string, ms = 15000): Promise<Response> {
   }
 }
 
-export const streamUrl = (u: string) =>
-  isNativeStandalone() ? u : `/api/stream?url=${encodeURIComponent(u)}`;
+export const streamUrl = (u: string, headers?: Record<string, string>) => {
+  if (isNativeStandalone()) return u;
+  const h = headers && Object.keys(headers).length ? `&h=${encodeURIComponent(JSON.stringify(headers))}` : "";
+  return `/api/stream?url=${encodeURIComponent(u)}${h}`;
+};
 
 async function request(url: string, proxy: boolean, as: "json" | "text") {
   const host = new URL(url).host;
@@ -300,7 +305,7 @@ export async function ctgSearch(q: string): Promise<CtgMovie[]> {
 
 export const ctgDetail = (id: number) => getData<CtgMovie>(`${getCtgBase()}/api/movies/${id}`, { ttl: 120_000 });
 
-// ───────────────────────── Bongo ─────────────────────────
+// ───────────────────────── Bongo / Mukul Drama ─────────────────────────
 export interface BongoItem {
   id: string;
   title: string;
@@ -310,6 +315,8 @@ export interface BongoItem {
   contentType?: string;
   watchUrl?: string;
   premium?: boolean;
+  ytVideo?: YtVideo;
+  catalogMovie?: CatalogMovie;
 }
 export interface BongoCategory {
   key: string;
@@ -318,9 +325,91 @@ export interface BongoCategory {
 }
 
 export async function bongoScrape(): Promise<BongoCategory[]> {
-  const d = await getData<any>(getVault().bongoScrape, { ttl: 10 * 60_000 });
-  const cats = (d.categories || []) as BongoCategory[];
-  return cats.map((c) => ({ ...c, items: c.items.map((i) => ({ ...i, title: decode(i.title) })) }));
+  const cached = cache.get("mukul_drama_feed");
+  if (cached && Date.now() - cached.t < 10 * 60_000) return cached.v as BongoCategory[];
+
+  try {
+    const r = await timedFetch(getVault().bongoScrape, 4500);
+    const d = await r.json();
+    const cats = (d?.categories || []) as BongoCategory[];
+    if (cats.some((c) => c.items?.length > 0)) {
+      const norm = cats.map((c) => ({ ...c, items: c.items.map((i) => ({ ...i, title: decode(i.title) })) }));
+      cache.set("mukul_drama_feed", { t: Date.now(), v: norm });
+      return norm;
+    }
+  } catch {
+    // Fallback to live Drama & Web Series catalog/YouTube sources when Bongo worker is offline
+  }
+
+  const [natokRes, seriesYtRes, teleRes, catRes] = await Promise.allSettled([
+    ytList("Bangla New Full Natok Drama"),
+    ytList("Bangla Web Series Drama Full"),
+    ytList("Bangla Full Telefilm Drama"),
+    fetchMovieCatalog(),
+  ]);
+
+  const toYtBongo = (items: YtVideo[], catLabel: string, contentType: string): BongoItem[] =>
+    items.map((v) => ({
+      id: "yt-" + v.id,
+      title: decode(v.title),
+      thumbnail: v.thumb,
+      landscape: v.thumb,
+      category: catLabel,
+      contentType,
+      ytVideo: v,
+    }));
+
+  const categories: BongoCategory[] = [];
+  if (natokRes.status === "fulfilled" && natokRes.value.items.length) {
+    categories.push({
+      key: "drama",
+      title: "বাংলা নাটক · Mukul Drama",
+      items: toYtBongo(natokRes.value.items, "বাংলা নাটক", "DRAMA"),
+    });
+  }
+
+  const serialItems: BongoItem[] = [];
+  if (catRes.status === "fulfilled") {
+    const seenIds = new Set<number>();
+    catRes.value
+      .flatMap((c) => c.movies)
+      .filter((m) => m.type === "serial" && m.poster)
+      .forEach((m) => {
+        if (seenIds.has(m.kinopoisk_id)) return;
+        seenIds.add(m.kinopoisk_id);
+        serialItems.push({
+          id: "cat-" + m.kinopoisk_id,
+          title: m.title_en || m.title_ru,
+          thumbnail: m.poster,
+          landscape: m.poster,
+          category: "ওয়েব সিরিজ",
+          contentType: "SERIES",
+          catalogMovie: m,
+        });
+      });
+  }
+  if (seriesYtRes.status === "fulfilled" && seriesYtRes.value.items.length) {
+    serialItems.push(...toYtBongo(seriesYtRes.value.items.slice(0, 12), "বাংলা সিরিজ", "SERIES"));
+  }
+  if (serialItems.length) {
+    categories.push({
+      key: "series",
+      title: "ওয়েব সিরিজ · ড্রামা সিরিজ",
+      items: serialItems,
+    });
+  }
+
+  if (teleRes.status === "fulfilled" && teleRes.value.items.length) {
+    categories.push({
+      key: "telefilm",
+      title: "টেলিফিল্ম",
+      items: toYtBongo(teleRes.value.items, "টেলিফিল্ম", "TELEFILM"),
+    });
+  }
+
+  if (!categories.length) throw new Error("Mukul Drama লোড করা যায়নি");
+  cache.set("mukul_drama_feed", { t: Date.now(), v: categories });
+  return categories;
 }
 
 export const bongoSources = (id: string): PlaySource[] => {
@@ -534,32 +623,32 @@ export async function sportsMukulLive(): Promise<SportMatch[]> {
     };
     (m.servers || []).forEach((s: any, idx: number) => {
       if (!s || s.type === "token") return;
-      const rawUrl = String(s.proxyUrl || s.directUrl || "");
+      const proxy = typeof s.proxyUrl === "string" ? s.proxyUrl.trim() : "";
+      const direct = typeof s.directUrl === "string" ? s.directUrl.trim() : "";
+      const rawUrl = proxy || direct;
       if (!rawUrl) return;
-      const isDash = s.type === "dash" || /\.mpd(\?|$)/i.test(rawUrl) || /\.mpd(\?|$)/i.test(s.directUrl || "");
-      const isHls = !isDash && (s.type === "hls" || isHlsUrl(rawUrl) || isHlsUrl(s.directUrl || ""));
+      const isDash = s.type === "dash" || /\.mpd(\?|$)/i.test(rawUrl) || /\.mpd(\?|$)/i.test(direct);
+      const isHls = !isDash && (s.type === "hls" || isHlsUrl(rawUrl) || isHlsUrl(direct));
       const cleanKey = s.clearKey ? String(s.clearKey).replace(/[^0-9a-fA-F:]/g, "") : null;
       const clearKey = cleanKey && cleanKey.includes(":") ? cleanKey : null;
       const baseName = decode(s.name) || `সার্ভার ${idx + 1}`;
-      if (s.proxyUrl) {
-        pushSrv({
-          label: baseName,
-          url: s.proxyUrl,
-          hls: isHls,
-          dash: isDash,
-          clearKey,
-          noLocalProxy: true,
-        });
+      const hdrs: Record<string, string> = {};
+      if (s.headers && typeof s.headers === "object") {
+        for (const [hk, hv] of Object.entries(s.headers)) {
+          if (typeof hv === "string" && hv.trim()) hdrs[hk.toLowerCase()] = hv.trim();
+        }
       }
-      if (s.directUrl && (!s.proxyUrl || /^https:\/\//i.test(s.directUrl))) {
-        pushSrv({
-          label: s.proxyUrl ? `${baseName} (ডিরেক্ট)` : baseName,
-          url: s.directUrl,
-          hls: isHls,
-          dash: isDash,
-          clearKey,
-        });
-      }
+      const primary = proxy || direct;
+      const alt = proxy && direct && direct !== proxy ? direct : undefined;
+      pushSrv({
+        label: baseName,
+        url: primary,
+        altUrl: alt,
+        headers: Object.keys(hdrs).length ? hdrs : undefined,
+        hls: isHls,
+        dash: isDash,
+        clearKey,
+      });
     });
 
     return {
@@ -617,16 +706,43 @@ export interface SportsData {
   highlightsError: boolean;
 }
 
+const ABBR: Record<string, string> = {
+  afg: "afghanistan",
+  zim: "zimbabwe",
+  pak: "pakistan",
+  sl: "srilanka",
+  ban: "bangladesh",
+  sa: "southafrica",
+  ind: "india",
+  aus: "australia",
+  eng: "england",
+  nz: "newzealand",
+  wi: "westindies",
+};
+
+function normMatchKey(title: string, status: string): string {
+  const words = title
+    .toLowerCase()
+    .replace(/\b\d+\b/g, "")
+    .replace(/[^a-z0-9\u0980-\u09ff\s]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w && w !== "vs" && w !== "v")
+    .map((w) => ABBR[w] || w)
+    .sort();
+  return words.join("") + "|" + (status === "live" ? "l" : "u");
+}
+
 export async function loadSports(): Promise<SportsData> {
   const [a, b, c] = await Promise.allSettled([sportsMatches(), sportsFeed(), sportsMukulLive()]);
   if (a.status === "rejected" && b.status === "rejected" && c.status === "rejected") throw c.reason;
   const byKey = new Map<string, SportMatch>();
   [
     ...(c.status === "fulfilled" ? c.value : []),
-    ...(a.status === "fulfilled" ? a.value : []),
     ...(b.status === "fulfilled" ? b.value.matches : []),
+    ...(a.status === "fulfilled" ? a.value : []),
   ].forEach((m) => {
-    const k = m.title.toLowerCase().replace(/[^a-z0-9\u0980-\u09ff]+/g, "") + "|" + (m.status === "live" ? "l" : "u");
+    const k = normMatchKey(m.title, m.status);
     const ex = byKey.get(k);
     if (!ex) return void byKey.set(k, { ...m, servers: [...m.servers] });
     m.servers.forEach((sv) => {

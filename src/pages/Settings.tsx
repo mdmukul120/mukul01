@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, LayoutGrid, MapPin, Moon, Music2, PictureInPicture2, ShieldCheck, Smartphone, Sun, Trash2, Zap } from "lucide-react";
+import { Check, MapPin, Moon, Music2, PictureInPicture2, ShieldCheck, Smartphone, Sun, Trash2, Zap } from "lucide-react";
 import { clearApiCache } from "../lib/api";
 import { useApp, type Theme } from "../lib/store";
 import { Footer, PageHeader } from "../components/ui";
@@ -32,8 +32,6 @@ export default function Settings() {
     setDefaultCity,
     bgPlay,
     setBgPlay,
-    showWidgets,
-    setShowWidgets,
     liked,
     favCh,
     clearFavorites,
@@ -210,15 +208,15 @@ export default function Settings() {
 
         <div className="border-t border-line" />
 
-        {/* Floating, Background Play & Home Widgets */}
+        {/* Floating & Background Play */}
         <section aria-labelledby="sec-floating">
           <div className="mb-3">
             <h2 id="sec-floating" className="text-[16px] font-bold">
-              ফ্লোটিং প্লেয়ার ও হোম উইগেট
+              ফ্লোটিং ও ব্যাকগ্রাউন্ড প্লেব্যাক
             </h2>
-            <p className="mt-0.5 text-xs text-mute">ব্যাকগ্রাউন্ড ভিডিও/মিউজিক ও ড্যাশবোর্ড উইগেট নিয়ন্ত্রণ করুন</p>
+            <p className="mt-0.5 text-xs text-mute">ব্যাকগ্রাউন্ড ভিডিও ও মিউজিক মিনি-প্লেয়ার নিয়ন্ত্রণ করুন</p>
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3">
             <button
               type="button"
               role="switch"
@@ -249,39 +247,6 @@ export default function Settings() {
                 )}
               >
                 <span className={cn("h-5 w-5 rounded-full transition-transform", bgPlay ? "bg-ink" : "bg-mute")} />
-              </span>
-            </button>
-
-            <button
-              type="button"
-              role="switch"
-              aria-checked={showWidgets}
-              onClick={() => {
-                const next = !showWidgets;
-                setShowWidgets(next);
-                toast(next ? "হোম ও ওয়েদার উইগেট চালু হয়েছে" : "হোম উইগেট লুকানো হয়েছে");
-              }}
-              className={cn(
-                "flex min-h-[68px] items-center justify-between gap-3 rounded-2xl p-4 text-left transition active:scale-[0.98]",
-                showWidgets ? "glow-ring bg-surface" : "card-edge bg-surface hover:bg-surface2"
-              )}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl", showWidgets ? "bg-neon text-ink" : "bg-surface2 text-mute")}>
-                  <LayoutGrid className="h-5 w-5" />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-bold truncate">অ্যাপ ও ওয়েদার উইগেট</p>
-                  <p className="text-[11px] text-mute leading-snug">হোম পেজে নিজস্ব অ্যাপ ও আলাদা ওয়েদার উইগেট</p>
-                </div>
-              </div>
-              <span
-                className={cn(
-                  "flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors",
-                  showWidgets ? "bg-neon justify-end" : "bg-surface2 justify-start border border-line"
-                )}
-              >
-                <span className={cn("h-5 w-5 rounded-full transition-transform", showWidgets ? "bg-ink" : "bg-mute")} />
               </span>
             </button>
           </div>

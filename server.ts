@@ -59,9 +59,28 @@ function parseTarget(raw?: string | null): URL | null {
   }
 }
 
-const proxied = (abs: string) => `/api/stream?url=${encodeURIComponent(abs)}`;
+const proxied = (abs: string, hParam?: string) =>
+  `/api/stream?url=${encodeURIComponent(abs)}${hParam ? `&h=${encodeURIComponent(hParam)}` : ""}`;
 
-function rewritePlaylist(text: string, base: string): string {
+function parseForwardHeaders(raw?: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      const kl = k.toLowerCase();
+      if ((kl === "referer" || kl === "origin" || kl === "user-agent") && typeof v === "string" && v.trim()) {
+        out[kl] = v.trim();
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function rewritePlaylist(text: string, base: string, hParam?: string): string {
   const abs = (u: string) => new URL(u, base).toString();
   return text
     .split(/\r?\n/)
@@ -71,19 +90,39 @@ function rewritePlaylist(text: string, base: string): string {
       if (t.startsWith("#")) {
         return line.replace(/URI="([^"]+)"/g, (_m, u) => {
           try {
-            return `URI="${proxied(abs(u))}"`;
+            return `URI="${proxied(abs(u), hParam)}"`;
           } catch {
             return _m;
           }
         });
       }
       try {
-        return proxied(abs(t));
+        return proxied(abs(t), hParam);
       } catch {
         return line;
       }
     })
     .join("\n");
+}
+
+function rewriteMpd(xml: string, finalUrl: string, hParam?: string): string {
+  const mpdDir = finalUrl.slice(0, finalUrl.lastIndexOf("/") + 1);
+  const encodeBase = (dir: string) => {
+    const payload = Buffer.from(JSON.stringify({ d: dir, h: hParam || "" }), "utf8").toString("base64url");
+    return `/api/dash/${payload}/`;
+  };
+  if (/<BaseURL[^>]*>([^<]+)<\/BaseURL>/i.test(xml)) {
+    return xml.replace(/<BaseURL([^>]*)>([^<]+)<\/BaseURL>/gi, (_m, attrs, u) => {
+      try {
+        const resolved = new URL(u.trim(), mpdDir).toString();
+        const dir = resolved.endsWith("/") ? resolved : resolved.slice(0, resolved.lastIndexOf("/") + 1);
+        return `<BaseURL${attrs}>${encodeBase(dir)}</BaseURL>`;
+      } catch {
+        return `<BaseURL${attrs}>${encodeBase(mpdDir)}</BaseURL>`;
+      }
+    });
+  }
+  return xml.replace(/(<MPD\b[^>]*>)/i, `$1<BaseURL>${encodeBase(mpdDir)}</BaseURL>`);
 }
 
 // YouTube integration
@@ -216,22 +255,14 @@ async function startServer() {
     }
   });
 
-  // GET/HEAD /api/stream
-  app.all("/api/stream", async (req: Request, res: Response) => {
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      res.status(405).json({ error: "method" });
-      return;
-    }
-    const target = parseTarget(req.query.url as string);
-    if (!target) {
-      res.status(400).json({ error: "bad url" });
-      return;
-    }
-
+  async function pipeStreamTarget(target: URL, hParam: string | undefined, req: Request, res: Response) {
+    const fwd = parseForwardHeaders(hParam);
     const headers: Record<string, string> = {
-      "user-agent": UA,
+      "user-agent": fwd["user-agent"] || UA,
       accept: "*/*",
     };
+    if (fwd.referer) headers.referer = fwd.referer;
+    if (fwd.origin) headers.origin = fwd.origin;
     const range = req.headers.range;
     if (range) headers.range = range;
 
@@ -243,8 +274,9 @@ async function startServer() {
       });
 
       const ct = upstream.headers.get("content-type") || "";
-      const isPlaylist =
-        /mpegurl/i.test(ct) || /\.m3u8(\?|$)/i.test(target.pathname + target.search);
+      const pathAndQuery = target.pathname + target.search;
+      const isPlaylist = /mpegurl/i.test(ct) || /\.m3u8(\?|$)/i.test(pathAndQuery);
+      const isMpd = /dash\+xml/i.test(ct) || /\.mpd(\?|$)/i.test(pathAndQuery);
 
       if (isPlaylist && upstream.ok) {
         const text = await upstream.text();
@@ -252,12 +284,27 @@ async function startServer() {
           res.status(200);
           res.setHeader("content-type", "application/vnd.apple.mpegurl");
           res.setHeader("cache-control", "no-store");
-          res.send(rewritePlaylist(text, upstream.url || target.toString()));
+          res.send(rewritePlaylist(text, upstream.url || target.toString(), hParam));
           return;
         }
         res.status(upstream.status);
         res.setHeader("content-type", ct || "text/plain");
         res.send(text);
+        return;
+      }
+
+      if (isMpd && upstream.ok) {
+        const xml = await upstream.text();
+        if (/<MPD\b/i.test(xml)) {
+          res.status(200);
+          res.setHeader("content-type", "application/dash+xml");
+          res.setHeader("cache-control", "no-store");
+          res.send(rewriteMpd(xml, upstream.url || target.toString(), hParam));
+          return;
+        }
+        res.status(upstream.status);
+        res.setHeader("content-type", ct || "application/xml");
+        res.send(xml);
         return;
       }
 
@@ -276,10 +323,10 @@ async function startServer() {
 
       const ctype = res.getHeader("content-type") || "";
       if (
-        /\.mkv(\?|$)/i.test(target.pathname + target.search) ||
+        /\.mkv(\?|$)/i.test(pathAndQuery) ||
         /matroska|octet-stream/i.test(String(ctype))
       ) {
-        if (!/\.(mp4|m4v|webm|mov)(\?|$)/i.test(target.pathname)) {
+        if (!/\.(mp4|m4v|webm|mov|m4s|ts)(\?|$)/i.test(target.pathname)) {
           res.setHeader("content-type", "video/mp4");
         }
       }
@@ -299,6 +346,43 @@ async function startServer() {
       if (!res.headersSent) {
         res.status(502).json({ error: String(e?.message || e) });
       }
+    }
+  }
+
+  // GET/HEAD /api/stream
+  app.all("/api/stream", async (req: Request, res: Response) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.status(405).json({ error: "method" });
+      return;
+    }
+    const target = parseTarget(req.query.url as string);
+    if (!target) {
+      res.status(400).json({ error: "bad url" });
+      return;
+    }
+    const hParam = typeof req.query.h === "string" && req.query.h.trim() ? req.query.h.trim() : undefined;
+    await pipeStreamTarget(target, hParam, req, res);
+  });
+
+  // GET/HEAD /api/dash/:payload/... (DASH init/media segment proxy)
+  app.use("/api/dash/:payload", async (req: Request, res: Response) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.status(405).json({ error: "method" });
+      return;
+    }
+    try {
+      const payloadParam = Array.isArray(req.params.payload) ? req.params.payload[0] : req.params.payload;
+      const raw = Buffer.from(String(payloadParam || ""), "base64url").toString("utf8");
+      const meta = JSON.parse(raw) as { d?: string; h?: string };
+      const rel = req.url.replace(/^\/+/, "");
+      const target = parseTarget(meta.d ? new URL(rel, meta.d).toString() : null);
+      if (!target) {
+        res.status(400).json({ error: "bad dash target" });
+        return;
+      }
+      await pipeStreamTarget(target, meta.h || undefined, req, res);
+    } catch {
+      res.status(400).json({ error: "bad dash payload" });
     }
   });
 
