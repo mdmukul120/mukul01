@@ -5,6 +5,7 @@ export interface PlaySource {
   label: string;
   url: string;
   altUrl?: string;
+  embedUrl?: string;
   headers?: Record<string, string>;
   hls?: boolean;
   dash?: boolean;
@@ -682,7 +683,26 @@ export async function sportsMukulLive(): Promise<SportMatch[]> {
       if (srv.url && !servers.find((x) => x.url === srv.url)) servers.push(srv);
     };
     (m.servers || []).forEach((s: any, idx: number) => {
-      if (!s || s.type === "token") return;
+      if (!s) return;
+      const baseName = decode(s.name) || `সার্ভার ${idx + 1}`;
+      if (s.type === "token") {
+        if (typeof s.tokenApi === "string" && s.tokenApi.trim()) {
+          try {
+            const tok = JSON.parse(s.tokenApi) as { api?: string; url?: string };
+            const embed = (tok?.api || tok?.url || "").trim();
+            if (/^https?:\/\//i.test(embed)) {
+              pushSrv({
+                label: `${baseName} (লাইভ প্লেয়ার)`,
+                url: embed,
+                embedUrl: embed,
+              });
+            }
+          } catch {
+            /* ignore malformed tokenApi */
+          }
+        }
+        return;
+      }
       const proxy = typeof s.proxyUrl === "string" ? s.proxyUrl.trim() : "";
       const direct = typeof s.directUrl === "string" ? s.directUrl.trim() : "";
       const rawUrl = proxy || direct;
@@ -691,7 +711,6 @@ export async function sportsMukulLive(): Promise<SportMatch[]> {
       const isHls = !isDash && (s.type === "hls" || isHlsUrl(rawUrl) || isHlsUrl(direct));
       const cleanKey = s.clearKey ? String(s.clearKey).replace(/[^0-9a-fA-F:]/g, "") : null;
       const clearKey = cleanKey && cleanKey.includes(":") ? cleanKey : null;
-      const baseName = decode(s.name) || `সার্ভার ${idx + 1}`;
       const hdrs: Record<string, string> = {};
       if (s.headers && typeof s.headers === "object") {
         for (const [hk, hv] of Object.entries(s.headers)) {
@@ -883,13 +902,13 @@ export async function edgeEntertainment(): Promise<BongoCategory[]> {
 }
 
 export async function loadSports(): Promise<SportsData> {
-  const micro = readMicroCache<SportsData>("sports_feed", 90_000);
+  const micro = readMicroCache<SportsData>("sports_feed_v2", 90_000);
   if (micro && micro.matches.length > 0) {
     // Silent background revalidate
     void (async () => {
       try {
         const fresh = await fetchFreshSports();
-        if (fresh.matches.length) writeMicroCache("sports_feed", fresh);
+        if (fresh.matches.length) writeMicroCache("sports_feed_v2", fresh);
       } catch {
         /* ignore */
       }
@@ -897,7 +916,7 @@ export async function loadSports(): Promise<SportsData> {
     return micro;
   }
   const fresh = await fetchFreshSports();
-  if (fresh.matches.length) writeMicroCache("sports_feed", fresh);
+  if (fresh.matches.length) writeMicroCache("sports_feed_v2", fresh);
   return fresh;
 }
 

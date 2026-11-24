@@ -241,6 +241,7 @@ async function startServer() {
           accept: "application/json, text/plain, */*",
         },
         redirect: "follow",
+        signal: AbortSignal.timeout(8000),
       });
       const body = await upstream.text();
       res.status(upstream.status);
@@ -272,6 +273,7 @@ async function startServer() {
         method: req.method,
         headers,
         redirect: "follow",
+        signal: AbortSignal.timeout(8000),
       });
 
       const ct = upstream.headers.get("content-type") || "";
@@ -322,10 +324,16 @@ async function startServer() {
         if (v) res.setHeader(h, v);
       }
 
-      const ctype = res.getHeader("content-type") || "";
+      const ctype = String(res.getHeader("content-type") || "");
       if (
+        upstream.ok &&
+        (/\.(js|txt|png|jpg|jpeg|webp|gif|ico|css|html)(\?|$)/i.test(target.pathname) ||
+          /javascript|text\/plain|text\/html|image\//i.test(ctype))
+      ) {
+        res.setHeader("content-type", "video/mp2t");
+      } else if (
         /\.mkv(\?|$)/i.test(pathAndQuery) ||
-        /matroska|octet-stream/i.test(String(ctype))
+        /matroska|octet-stream/i.test(ctype)
       ) {
         if (!/\.(mp4|m4v|webm|mov|m4s|ts)(\?|$)/i.test(target.pathname)) {
           res.setHeader("content-type", "video/mp4");

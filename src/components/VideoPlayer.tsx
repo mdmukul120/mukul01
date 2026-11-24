@@ -11,65 +11,80 @@ import Related from "./Related";
 interface Attempt {
   si: number;
   url: string;
+  embedUrl?: string;
   hls: boolean;
   dash: boolean;
   clearKey?: string | null;
   native: boolean;
 }
 
-/** Per server: primary -> direct/altUrl -> local /api/stream (with headers & MPD rewriting) -> native fallback. */
+/**
+ * Breadth-first attempt builder:
+ * Pass 1 tries the single best URL of EACH server (S0 -> S1 -> S2 -> ...) so a dead server switches
+ * to a live server in ~3-7s instead of burning 30s on duplicate retries of the same broken upstream.
+ * Pass 2 adds local /api/stream, altUrl, and native fallbacks.
+ */
 function buildAttempts(sources: PlaySource[]): Attempt[] {
-  const out: Attempt[] = [];
-  const pushUnique = (a: Attempt) => {
+  const pass1: Attempt[] = [];
+  const pass2: Attempt[] = [];
+  const seen = new Set<string>();
+
+  const pushTo = (bucket: Attempt[], a: Attempt) => {
     if (!a.url) return;
-    if (!out.some((x) => x.si === a.si && x.url === a.url && x.native === a.native && x.dash === a.dash)) {
-      out.push(a);
-    }
+    const key = `${a.si}|${a.url}|${a.embedUrl || ""}|${a.native ? 1 : 0}|${a.dash ? 1 : 0}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    bucket.push(a);
   };
 
   sources.forEach((s, si) => {
+    if (s.embedUrl) {
+      pushTo(pass1, { si, url: s.embedUrl, embedUrl: s.embedUrl, hls: false, dash: false, native: false });
+      return;
+    }
+
     const dash = !!s.dash || /\.mpd(\?|$)/i.test(s.url) || (!!s.altUrl && /\.mpd(\?|$)/i.test(s.altUrl));
     const hls = !dash && (!!s.hls || isHlsUrl(s.url) || (!!s.altUrl && isHlsUrl(s.altUrl)));
+    const hasCustomHeaders = !!(s.headers && Object.keys(s.headers).length > 0);
+    const isHttpOnly = s.url.startsWith("http://");
 
     if (dash) {
-      if (!s.url.startsWith("http://")) {
-        pushUnique({ si, url: s.url, hls: false, dash: true, clearKey: s.clearKey, native: false });
-      }
-      if (s.altUrl && !s.altUrl.startsWith("http://")) {
-        pushUnique({ si, url: s.altUrl, hls: false, dash: true, clearKey: s.clearKey, native: false });
+      if (s.altUrl && !s.altUrl.startsWith("http://") && !hasCustomHeaders) {
+        pushTo(pass1, { si, url: s.altUrl, hls: false, dash: true, clearKey: s.clearKey, native: false });
+        if (!s.url.startsWith("http://")) {
+          pushTo(pass2, { si, url: s.url, hls: false, dash: true, clearKey: s.clearKey, native: false });
+        }
+      } else if (!isHttpOnly) {
+        pushTo(pass1, { si, url: s.url, hls: false, dash: true, clearKey: s.clearKey, native: false });
       }
       if (!s.noLocalProxy) {
         const target = s.altUrl || s.url;
-        pushUnique({ si, url: streamUrl(target, s.headers), hls: false, dash: true, clearKey: s.clearKey, native: false });
+        pushTo(pass2, { si, url: streamUrl(target, s.headers), hls: false, dash: true, clearKey: s.clearKey, native: false });
       }
       return;
     }
 
-    if (!s.url.startsWith("http://")) {
-      if (hls) {
-        pushUnique({ si, url: s.url, hls: true, dash: false, native: false });
-        if (s.altUrl && !s.altUrl.startsWith("http://")) {
-          pushUnique({ si, url: s.altUrl, hls: true, dash: false, native: false });
-        }
-      } else {
-        pushUnique({ si, url: s.url, hls: false, dash: false, native: true });
-        if (s.altUrl && !s.altUrl.startsWith("http://")) {
-          pushUnique({ si, url: s.altUrl, hls: false, dash: false, native: true });
-        }
-      }
+    // Pass 1: single fastest working path per server
+    if (isHttpOnly && !s.noLocalProxy) {
+      pushTo(pass1, { si, url: streamUrl(s.url, s.headers), hls, dash: false, native: !hls });
+    } else if (!isHttpOnly) {
+      pushTo(pass1, { si, url: s.url, hls, dash: false, native: !hls });
     }
 
+    // Pass 2: alternate direct CDN (if no custom headers needed) & local proxy fallback
+    if (s.altUrl && !s.altUrl.startsWith("http://") && !hasCustomHeaders) {
+      pushTo(pass2, { si, url: s.altUrl, hls, dash: false, native: !hls });
+    }
     if (!s.noLocalProxy) {
       const target = s.altUrl || s.url;
-      pushUnique({ si, url: streamUrl(target, s.headers), hls, dash: false, native: !hls });
+      pushTo(pass2, { si, url: streamUrl(target, s.headers), hls, dash: false, native: !hls });
     }
-
-    if (hls && !s.url.startsWith("http://")) {
-      pushUnique({ si, url: s.url, hls: true, dash: false, native: true });
+    if (hls && !isHttpOnly) {
+      pushTo(pass2, { si, url: s.url, hls: true, dash: false, native: true });
     }
   });
 
-  return out;
+  return [...pass1, ...pass2];
 }
 
 export default function VideoPlayer() {
@@ -112,6 +127,7 @@ export default function VideoPlayer() {
   const att = attempts[step];
 
   useEffect(() => {
+    emeBlockedRef.current = false;
     setStep(0);
     setNative(!!req && req.sources.some((x) => isMkvUrl(x.url)));
     setLevels([]);
@@ -201,7 +217,14 @@ export default function VideoPlayer() {
 
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || !att) return;
+    if (!att) return;
+    if (att.embedUrl) {
+      setStatus("ready");
+      setBuffering(false);
+      setPlaying(true);
+      return;
+    }
+    if (!v) return;
     setStatus("loading");
     setBuffering(true);
     let hls: Hls | null = null;
@@ -289,11 +312,38 @@ export default function VideoPlayer() {
           const player = new shaka.Player();
           dashPlayer = player;
           shakaRef.current = player;
+          player.configure({
+            manifest: {
+              retryParameters: {
+                maxAttempts: 2,
+                baseDelay: 300,
+                backoffFactor: 1.5,
+                fuzzFactor: 0.2,
+                timeout: 7000,
+              },
+              dash: {
+                ignoreMinBufferTime: true,
+              },
+            },
+            streaming: {
+              retryParameters: {
+                maxAttempts: 2,
+                baseDelay: 300,
+                backoffFactor: 1.5,
+                fuzzFactor: 0.2,
+                timeout: 7000,
+              },
+              bufferingGoal: 12,
+              rebufferingGoal: 2,
+              lowLatencyMode: false,
+            },
+          });
           if (att.clearKey && att.clearKey.includes(":")) {
             const [kid, key] = att.clearKey.split(":");
             if (kid && key) {
               player.configure({
                 drm: {
+                  preferredKeySystems: ["org.w3.clearkey"],
                   clearKeys: {
                     [kid.toLowerCase()]: key.toLowerCase(),
                   },
@@ -303,7 +353,7 @@ export default function VideoPlayer() {
           }
           player.addEventListener("error", (ev: any) => {
             const code = Number(ev?.detail?.code || 0);
-            const isDrm = code >= 6000 && code < 7000;
+            const isDrm = code === 6001 || code === 6002 || code === 6012;
             if (isDrm) emeBlockedRef.current = true;
             fail(isDrm);
           });
@@ -317,7 +367,11 @@ export default function VideoPlayer() {
             safePlay();
           } catch (err: any) {
             const code = Number(err?.code || 0);
-            const isDrm = (code >= 6000 && code < 7000) || /drm|eme|key|encrypted/i.test(String(err?.message || ""));
+            const isDrm =
+              code === 6001 ||
+              code === 6002 ||
+              code === 6012 ||
+              /MediaKey|EME|encrypted-media/i.test(String(err?.message || ""));
             if (isDrm) emeBlockedRef.current = true;
             fail(isDrm);
           }
@@ -331,11 +385,15 @@ export default function VideoPlayer() {
         hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
-          maxBufferLength: 30,
-          manifestLoadingTimeOut: 9000,
-          manifestLoadingMaxRetry: 1,
-          levelLoadingTimeOut: 9000,
-          fragLoadingTimeOut: 12000,
+          maxBufferLength: 24,
+          manifestLoadingTimeOut: 6000,
+          manifestLoadingMaxRetry: 0,
+          levelLoadingTimeOut: 6000,
+          levelLoadingMaxRetry: 1,
+          levelLoadingRetryDelay: 300,
+          fragLoadingTimeOut: 7000,
+          fragLoadingMaxRetry: 1,
+          fragLoadingRetryDelay: 300,
         });
         hlsRef.current = hls;
         hls.loadSource(att.url);
@@ -365,7 +423,7 @@ export default function VideoPlayer() {
     const timer = window.setTimeout(() => {
       if (dead || nativeRef.current) return;
       if (v.readyState < 2) fail(false);
-    }, 12000);
+    }, 8000);
 
     return () => {
       dead = true;
@@ -558,19 +616,32 @@ export default function VideoPlayer() {
             : "sticky top-0 z-20 mx-auto aspect-video w-full bg-black lg:max-w-[880px]"
         )}
       >
-        <video
-          ref={videoRef}
-          className="absolute inset-0 h-full w-full bg-black object-contain"
-          playsInline
-          autoPlay
-          poster={req.poster}
-          controls={native && !videoMini}
-          onContextMenu={(e) => e.preventDefault()}
-        />
+        {att.embedUrl ? (
+          <iframe
+            key={att.embedUrl}
+            src={att.embedUrl}
+            title={req.title}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            referrerPolicy="no-referrer"
+            allowFullScreen
+            className="absolute inset-0 h-full w-full border-0 bg-black"
+          />
+        ) : (
+          <video
+            ref={videoRef}
+            className="absolute inset-0 h-full w-full bg-black object-contain"
+            playsInline
+            autoPlay
+            poster={req.poster}
+            controls={native && !videoMini}
+            onContextMenu={(e) => e.preventDefault()}
+          />
+        )}
 
         {videoMini ? (
-          <div className="absolute inset-0 z-20 flex flex-col justify-between bg-gradient-to-b from-black/75 via-transparent to-black/80 p-2">
-            <div className="flex items-center justify-between gap-1">
+          <div className={cn("absolute inset-0 z-20 flex flex-col justify-between p-2", att.embedUrl ? "pointer-events-none bg-gradient-to-b from-black/75 via-transparent to-transparent" : "bg-gradient-to-b from-black/75 via-transparent to-black/80")}>
+            <div className="pointer-events-auto flex items-center justify-between gap-1">
               <button
                 type="button"
                 onClick={() => setVideoMini(false)}
@@ -591,30 +662,32 @@ export default function VideoPlayer() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={toggle}
-                aria-label={playing ? "পজ" : "প্লে"}
-                className="grid h-9 w-9 place-items-center rounded-full bg-neon text-ink shadow-md active:scale-90"
-              >
-                {playing ? <Pause className="h-4 w-4 fill-ink" /> : <Play className="h-4 w-4 fill-ink pl-0.5" />}
-              </button>
-              {req.live && <span className="rounded bg-live px-1.5 py-0.5 text-[9px] font-extrabold text-white">LIVE</span>}
-              <button
-                type="button"
-                onClick={requestSystemPip}
-                aria-label="সিস্টেম PiP"
-                title="সিস্টেম PiP"
-                className="grid h-8 w-8 place-items-center rounded-full bg-black/70 text-white active:scale-90"
-              >
-                <PictureInPicture2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            {!att.embedUrl && (
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={toggle}
+                  aria-label={playing ? "পজ" : "প্লে"}
+                  className="grid h-9 w-9 place-items-center rounded-full bg-neon text-ink shadow-md active:scale-90"
+                >
+                  {playing ? <Pause className="h-4 w-4 fill-ink" /> : <Play className="h-4 w-4 fill-ink pl-0.5" />}
+                </button>
+                {req.live && <span className="rounded bg-live px-1.5 py-0.5 text-[9px] font-extrabold text-white">LIVE</span>}
+                <button
+                  type="button"
+                  onClick={requestSystemPip}
+                  aria-label="সিস্টেম PiP"
+                  title="সিস্টেম PiP"
+                  className="grid h-8 w-8 place-items-center rounded-full bg-black/70 text-white active:scale-90"
+                >
+                  <PictureInPicture2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <>
-            {native && (
+            {(native || att.embedUrl) && (
               <div className="absolute inset-x-3 top-3 z-30 flex items-center justify-between pointer-events-none">
                 <button
                   type="button"
@@ -646,7 +719,7 @@ export default function VideoPlayer() {
                 </button>
               </div>
             )}
-            {status !== "error" && !native && (
+            {status !== "error" && !native && !att.embedUrl && (
               <Chrome
                 title={req.title}
                 subtitle={req.subtitle}
@@ -727,19 +800,24 @@ export default function VideoPlayer() {
               >
                 <PictureInPicture2 className="h-3.5 w-3.5" /> ফ্লোটিং মোডে দেখুন
               </button>
-              <button
-                onClick={() => setNative((n) => !n)}
-                className="card-edge min-h-[40px] rounded-full bg-surface2 px-4 py-2 text-[11px] font-semibold text-mute hover:text-neon active:scale-95"
-              >
-                {native ? "কাস্টম কন্ট্রোলারে ফিরুন" : "ডিফল্ট ব্রাউজার প্লেয়ার"}
-              </button>
+              {!att.embedUrl && (
+                <button
+                  onClick={() => setNative((n) => !n)}
+                  className="card-edge min-h-[40px] rounded-full bg-surface2 px-4 py-2 text-[11px] font-semibold text-mute hover:text-neon active:scale-95"
+                >
+                  {native ? "কাস্টম কন্ট্রোলারে ফিরুন" : "ডিফল্ট ব্রাউজার প্লেয়ার"}
+                </button>
+              )}
             </div>
             {req.sources.length > 1 && (
               <div className="no-scrollbar -mx-4 mt-4 flex gap-2 overflow-x-auto px-4 pb-1">
                 {req.sources.map((s, i) => (
                   <button
                     key={s.url + i}
-                    onClick={() => setStep(attempts.findIndex((a) => a.si === i))}
+                    onClick={() => {
+                      const idx = attempts.findIndex((a) => a.si === i);
+                      if (idx >= 0) setStep(idx);
+                    }}
                     className={cn("shrink-0 rounded-full px-4 py-2 text-xs font-semibold active:scale-95", i === att.si ? "glow-soft bg-neon text-ink" : "card-edge bg-surface2 text-mute")}
                   >
                     {s.label}
