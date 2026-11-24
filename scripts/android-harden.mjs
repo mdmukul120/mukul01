@@ -334,7 +334,7 @@ object SecurityShield {
   }
 
   private fun detectHooks(): Boolean {
-    val stack = Thread.currentThread().stackTrace.joinToString("\n") { it.className.lowercase() }
+    val stack = Thread.currentThread().stackTrace.joinToString("\\n") { it.className.lowercase() }
     if (hookMarkers.any { stack.contains(it) }) return true
     return try {
       val maps = File("/proc/self/maps").readText().lowercase()
@@ -434,8 +434,11 @@ import java.util.concurrent.Executors
 class MainActivity : BridgeActivity() {
   @Volatile
   private var lastVerdict: SecurityVerdict? = null
+  @Volatile
+  private var pipAllowed: Boolean = false
   private val secExecutor = Executors.newSingleThreadExecutor()
 
+  @Suppress("DEPRECATION")
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
@@ -477,7 +480,9 @@ class MainActivity : BridgeActivity() {
 
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
-    triggerPipMode()
+    if (pipAllowed) {
+      triggerPipMode()
+    }
   }
 
   override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
@@ -515,10 +520,14 @@ class MainActivity : BridgeActivity() {
     fun getSecurityLevel(): Int = lastVerdict?.shieldScore ?: 10
 
     @JavascriptInterface
+    fun setPipEnabled(enabled: Boolean) {
+      pipAllowed = enabled
+    }
+
+    @JavascriptInterface
     fun enterPip(): Boolean {
-      var ok = false
-      runOnUiThread { ok = triggerPipMode() }
-      return ok
+      runOnUiThread { triggerPipMode() }
+      return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
     }
   }
 }
@@ -656,12 +665,12 @@ class MovieHubWeatherWidget : AppWidgetProvider() {
 let manifest = fs.readFileSync(manifestPath, "utf8");
 manifest = manifest.replace(/android:allowBackup="true"/g, 'android:allowBackup="false"');
 if (!manifest.includes("android:allowBackup=")) {
-  manifest = manifest.replace("<application ", '<application android:allowBackup="false" ');
+  manifest = manifest.replace(/<application\b/, '<application android:allowBackup="false"');
 }
 if (!manifest.includes("android:networkSecurityConfig=")) {
   manifest = manifest.replace(
-    "<application ",
-    '<application android:networkSecurityConfig="@xml/network_security_config" '
+    /<application\b/,
+    '<application android:networkSecurityConfig="@xml/network_security_config"'
   );
 }
 
@@ -672,7 +681,7 @@ for (const perm of [
 ]) {
   if (!manifest.includes(perm)) {
     manifest = manifest.replace(
-      "<application",
+      /<application\b/,
       `<uses-permission android:name="${perm}" />\n    <application`
     );
   }
@@ -680,7 +689,7 @@ for (const perm of [
 
 if (!manifest.includes("android:supportsPictureInPicture=")) {
   manifest = manifest.replace(
-    "<activity",
+    /<activity\b/,
     '<activity android:supportsPictureInPicture="true" android:resizeableActivity="true"'
   );
 }
@@ -723,7 +732,7 @@ if (fs.existsSync(rootGradlePath)) {
   fs.writeFileSync(rootGradlePath, rootGradle, "utf8");
 }
 
-// 10. Harden app/build.gradle: apply kotlin-android, JVM 21 options, core-ktx, R8/ProGuard minify + shrinkResources
+// 10. Harden app/build.gradle: apply kotlin-android, JVM 21 options, core-ktx, AGP 8+ proguard-android-optimize.txt, R8 minify + shrinkResources
 let gradle = fs.readFileSync(buildGradlePath, "utf8");
 if (!gradle.includes("kotlin-android")) {
   gradle = gradle.replace(
@@ -748,20 +757,19 @@ if (!gradle.includes("core-ktx")) {
   gradle = gradle.replace(
     "dependencies {",
     `dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.25"
     implementation "androidx.core:core-ktx:1.15.0"`
   );
 }
 gradle = gradle.replace(/minifyEnabled\s+false/g, "minifyEnabled true\n            shrinkResources true");
+gradle = gradle.replace(/getDefaultProguardFile\(['"]proguard-android\.txt['"]\)/g, "getDefaultProguardFile('proguard-android-optimize.txt')");
 fs.writeFileSync(buildGradlePath, gradle, "utf8");
 
 // 11. 10x R8 / ProGuard Obfuscation Rules
 const extraRules = `
 -repackageclasses 'mh'
 -allowaccessmodification
--optimizationpasses 7
--overloadaggressively
--keepattributes *Annotation*
+-keepattributes JavascriptInterface,AnnotationDefault,*Annotation*,Signature,InnerClasses,EnclosingMethod
 -keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }
 -keep class ${appId}.MainActivity { *; }
 -keep class ${appId}.MainActivity$MovieHubNativeBridge { *; }
@@ -770,7 +778,11 @@ const extraRules = `
 -keep class ${appId}.MovieHubAppWidget { *; }
 -keep class ${appId}.MovieHubWeatherWidget { *; }
 -keep class com.getcapacitor.** { *; }
+-keep class com.capacitorjs.** { *; }
 -dontwarn com.getcapacitor.**
+-dontwarn com.capacitorjs.**
+-dontwarn kotlin.**
+-dontwarn kotlinx.**
 -assumenosideeffects class android.util.Log {
   public static boolean isLoggable(java.lang.String, int);
   public static int v(...);

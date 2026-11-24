@@ -140,6 +140,18 @@ export default function VideoPlayer() {
 
   useEffect(() => {
     setVideoPlaying(playing);
+    try {
+      (window as any).MovieHubNative?.setPipEnabled?.(playing);
+    } catch {
+      /* ignore non-native */
+    }
+    return () => {
+      try {
+        (window as any).MovieHubNative?.setPipEnabled?.(false);
+      } catch {
+        /* ignore */
+      }
+    };
   }, [playing, setVideoPlaying]);
 
   const toggle = useCallback(() => {
