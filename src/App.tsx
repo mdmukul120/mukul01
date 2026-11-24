@@ -57,7 +57,7 @@ function Shell() {
             <Play className="h-5 w-5 fill-ink" />
           </span>
           <span className="text-[20px] font-extrabold tracking-tight whitespace-nowrap">
-            Mukul <span className="text-neon">Plus</span>
+            Movie <span className="text-neon">Hub+</span>
           </span>
         </div>
 

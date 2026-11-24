@@ -190,7 +190,7 @@ export default function Home() {
             <Play className="h-5 w-5 fill-ink" />
           </span>
           <h1 className="text-[22px] font-extrabold tracking-tight">
-            Mukul <span className="text-neon">Plus</span>
+            Movie <span className="text-neon">Hub+</span>
           </h1>
         </div>
         <button onClick={() => setTab("sports")} className="card-edge flex items-center gap-2 rounded-full bg-surface2 px-3.5 py-2 text-[11px] font-extrabold">

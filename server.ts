@@ -29,6 +29,7 @@ const ALLOWED_PROXY_PATTERNS = [
   /(^|\.)youtubei\.googleapis\.com$/,
   /(^|\.)googlevideo\.com$/,
   /(^|\.)mukullive\.ai\.studio$/,
+  /(^|\.)hamyra\.xyz$/,
 ];
 
 function isPrivateHost(host: string): boolean {
@@ -556,6 +557,68 @@ async function startServer() {
     } catch (e: any) {
       res.status(502).json({ error: String(e?.message || e) });
     }
+  });
+
+  // GET /api/edge/* (Authenticated Edge gateway for Cricfy, Tapmad Entertainment & Web Feed)
+  let edgeTokenCache: { token: string; exp: number } | null = null;
+  async function getEdgeToken(): Promise<string> {
+    if (process.env.EDGE_AUTH_TOKEN?.trim()) return process.env.EDGE_AUTH_TOKEN.trim();
+    if (edgeTokenCache && Date.now() < edgeTokenCache.exp) return edgeTokenCache.token;
+    for (const authUrl of [
+      "https://hamyra-api.aininjaibrahim.workers.dev/auth/token",
+      "https://edge.hamyra.xyz/auth/token",
+    ]) {
+      for (const method of ["GET", "POST"] as const) {
+        try {
+          const r = await fetch(authUrl, {
+            method,
+            headers: { "user-agent": UA, accept: "application/json", "content-type": "application/json" },
+            body: method === "POST" ? "{}" : undefined,
+          });
+          if (!r.ok) continue;
+          const j: any = await r.json().catch(() => null);
+          const tok = j?.token || j?.access_token || j?.data?.token;
+          if (typeof tok === "string" && tok.length > 8) {
+            edgeTokenCache = { token: tok, exp: Date.now() + 5 * 60_000 };
+            return tok;
+          }
+        } catch {
+          // continue trying
+        }
+      }
+    }
+    return "";
+  }
+
+  async function proxyEdgeEndpoint(targetUrl: string, res: Response) {
+    try {
+      const token = await getEdgeToken();
+      const hdrs: Record<string, string> = { "user-agent": UA, accept: "application/json" };
+      if (token) hdrs.authorization = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+      const r = await fetch(targetUrl, { headers: hdrs });
+      const text = await r.text();
+      if (!r.ok) {
+        res.status(200).json({ ok: false, upstreamStatus: r.status, items: [], matches: [] });
+        return;
+      }
+      res.setHeader("content-type", "application/json; charset=utf-8");
+      res.setHeader("cache-control", "public, s-maxage=60, stale-while-revalidate=180");
+      res.send(text);
+    } catch {
+      res.status(200).json({ ok: false, items: [], matches: [] });
+    }
+  }
+
+  app.get("/api/edge/matches", async (_req: Request, res: Response) => {
+    await proxyEdgeEndpoint("https://edge.hamyra.xyz/cricfy/matches", res);
+  });
+
+  app.get("/api/edge/entertainment", async (_req: Request, res: Response) => {
+    await proxyEdgeEndpoint("https://edge.hamyra.xyz/tapmad/entertainment", res);
+  });
+
+  app.get("/api/edge/feed", async (_req: Request, res: Response) => {
+    await proxyEdgeEndpoint("https://edge.hamyra.xyz/web-feed", res);
   });
 
   // Serve frontend

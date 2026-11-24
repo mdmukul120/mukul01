@@ -317,16 +317,16 @@ export default function Settings() {
               </div>
               <div>
                 <h2 id="sec-about" className="text-[15px] font-bold">
-                  ৪x লেয়ার সিকিউরিটি ও অ্যাপ প্রোটেকশন
+                  ১০x লেয়ার প্রিমিয়াম সিকিউরিটি শিল্ড
                 </h2>
                 <p className="mt-0.5 text-xs leading-relaxed text-mute">
-                  ৪-স্তরের ক্রিপ্টোগ্রাফিক এন্ডপয়েন্ট ভল্ট, সার্ভার-সাইড রেট-লিমিটেড গেটওয়ে, MITM সার্টিফিকেট ব্লকিং এবং অ্যান্ড্রয়েড R8 ফুল অবফাস্কেশন সক্রিয়
+                  মাল্টি-রাউন্ড ক্রিপ্টোগ্রাফিক এন্ডপয়েন্ট ভল্ট, সার্ভার-সাইড অথেনটিকেটেড গেটওয়ে, রুট/ডিবাগার/ফ্রিডা ডিটেকশন, MITM ব্লকিং ও Kotlin R8 ফুল অবফাস্কেশন সক্রিয়
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-mute sm:text-right">
               <Smartphone className="h-4 w-4 text-neon shrink-0" />
-              <span className="whitespace-nowrap font-semibold">Mukul Plus · v2.0</span>
+              <span className="whitespace-nowrap font-semibold">Movie Hub+ · v3.0</span>
             </div>
           </div>
         </section>

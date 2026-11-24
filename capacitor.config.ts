@@ -5,8 +5,8 @@ import type { CapacitorConfig } from "@capacitor/cli";
 const url = (process.env.APP_URL || "").trim();
 
 const config: CapacitorConfig = {
-  appId: "com.mukul.plus",
-  appName: "Mukul Plus",
+  appId: "com.moviehub.plus",
+  appName: "Movie Hub+",
   webDir: "dist",
   backgroundColor: "#040a06",
   plugins: {

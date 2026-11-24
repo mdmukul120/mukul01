@@ -19,5 +19,9 @@
   "wx": "https://api.weatherapi.com/v1/forecast.json",
   "wxKey": "241e16270ce941668ad100110231508",
   "px1": "https://api.allorigins.win/raw?url=",
-  "px2": "https://corsproxy.io/?url="
+  "px2": "https://corsproxy.io/?url=",
+  "edgeAuth": "https://hamyra-api.aininjaibrahim.workers.dev/auth/token",
+  "edgeMatches": "https://edge.hamyra.xyz/cricfy/matches",
+  "edgeEnt": "https://edge.hamyra.xyz/tapmad/entertainment",
+  "edgeFeed": "https://edge.hamyra.xyz/web-feed"
 }

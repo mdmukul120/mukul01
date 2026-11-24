@@ -41,9 +41,36 @@ const cache = new Map<string, { t: number; v: unknown }>();
 const inflight = new Map<string, Promise<unknown>>();
 const proxyHosts = new Set<string>();
 
+function readMicroCache<T>(key: string, maxAgeMs = 15 * 60_000): T | null {
+  try {
+    const raw = sessionStorage.getItem("mh_" + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { t: number; v: T };
+    if (Date.now() - parsed.t > maxAgeMs) return null;
+    return parsed.v;
+  } catch {
+    return null;
+  }
+}
+
+function writeMicroCache(key: string, v: unknown) {
+  try {
+    sessionStorage.setItem("mh_" + key, JSON.stringify({ t: Date.now(), v }));
+  } catch {
+    /* ignore storage quota */
+  }
+}
+
 export function clearApiCache() {
   cache.clear();
   proxyHosts.clear();
+  try {
+    Object.keys(sessionStorage)
+      .filter((k) => k.startsWith("mh_"))
+      .forEach((k) => sessionStorage.removeItem(k));
+  } catch {
+    /* ignore */
+  }
 }
 
 export function isNativeStandalone(): boolean {
@@ -328,20 +355,39 @@ export async function bongoScrape(): Promise<BongoCategory[]> {
   const cached = cache.get("mukul_drama_feed");
   if (cached && Date.now() - cached.t < 10 * 60_000) return cached.v as BongoCategory[];
 
+  const micro = readMicroCache<BongoCategory[]>("drama_feed", 20 * 60_000);
+  if (micro && micro.length) {
+    cache.set("mukul_drama_feed", { t: Date.now(), v: micro });
+    void buildBongoFeed().then((fresh) => {
+      if (fresh.length) {
+        cache.set("mukul_drama_feed", { t: Date.now(), v: fresh });
+        writeMicroCache("drama_feed", fresh);
+      }
+    }).catch(() => {});
+    return micro;
+  }
+
+  const fresh = await buildBongoFeed();
+  if (!fresh.length) throw new Error("Mukul Drama লোড করা যায়নি");
+  cache.set("mukul_drama_feed", { t: Date.now(), v: fresh });
+  writeMicroCache("drama_feed", fresh);
+  return fresh;
+}
+
+async function buildBongoFeed(): Promise<BongoCategory[]> {
   try {
     const r = await timedFetch(getVault().bongoScrape, 4500);
     const d = await r.json();
     const cats = (d?.categories || []) as BongoCategory[];
     if (cats.some((c) => c.items?.length > 0)) {
-      const norm = cats.map((c) => ({ ...c, items: c.items.map((i) => ({ ...i, title: decode(i.title) })) }));
-      cache.set("mukul_drama_feed", { t: Date.now(), v: norm });
-      return norm;
+      return cats.map((c) => ({ ...c, items: c.items.map((i) => ({ ...i, title: decode(i.title) })) }));
     }
   } catch {
-    // Fallback to live Drama & Web Series catalog/YouTube sources when Bongo worker is offline
+    // Fallback to live Drama & Edge & Web Series sources when Bongo worker is offline
   }
 
-  const [natokRes, seriesYtRes, teleRes, catRes] = await Promise.allSettled([
+  const [edgeRes, natokRes, seriesYtRes, teleRes, catRes] = await Promise.allSettled([
+    edgeEntertainment(),
     ytList("Bangla New Full Natok Drama"),
     ytList("Bangla Web Series Drama Full"),
     ytList("Bangla Full Telefilm Drama"),
@@ -360,6 +406,9 @@ export async function bongoScrape(): Promise<BongoCategory[]> {
     }));
 
   const categories: BongoCategory[] = [];
+  if (edgeRes.status === "fulfilled" && edgeRes.value.length) {
+    categories.push(...edgeRes.value);
+  }
   if (natokRes.status === "fulfilled" && natokRes.value.items.length) {
     categories.push({
       key: "drama",
@@ -407,8 +456,6 @@ export async function bongoScrape(): Promise<BongoCategory[]> {
     });
   }
 
-  if (!categories.length) throw new Error("Mukul Drama লোড করা যায়নি");
-  cache.set("mukul_drama_feed", { t: Date.now(), v: categories });
   return categories;
 }
 
@@ -461,6 +508,19 @@ export const CATALOG_CATEGORY_NAMES: Record<number, string> = {
 };
 
 export async function fetchMovieCatalog(): Promise<CatalogCategory[]> {
+  const micro = readMicroCache<CatalogCategory[]>("movie_catalog", 15 * 60_000);
+  if (micro && micro.length) {
+    void fetchFreshMovieCatalog().then((fresh) => {
+      if (fresh.length) writeMicroCache("movie_catalog", fresh);
+    }).catch(() => {});
+    return micro;
+  }
+  const fresh = await fetchFreshMovieCatalog();
+  if (fresh.length) writeMicroCache("movie_catalog", fresh);
+  return fresh;
+}
+
+async function fetchFreshMovieCatalog(): Promise<CatalogCategory[]> {
   if (!isNativeStandalone()) {
     try {
       const res = await fetch("/api/catalog");
@@ -733,11 +793,120 @@ function normMatchKey(title: string, status: string): string {
   return words.join("") + "|" + (status === "live" ? "l" : "u");
 }
 
+// ───────────────────────── Authenticated Edge Feeds (Hamyra / Cricfy / Tapmad) ─────────────────────────
+let edgeTokenMem: { tok: string; exp: number } | null = null;
+async function fetchNativeEdgeToken(): Promise<string> {
+  if (edgeTokenMem && Date.now() < edgeTokenMem.exp) return edgeTokenMem.tok;
+  try {
+    const r = await timedFetch(getVault().edgeAuth, 4000);
+    const j: any = await r.json().catch(() => null);
+    const tok = j?.token || j?.access_token || j?.data?.token || "";
+    if (tok) edgeTokenMem = { tok, exp: Date.now() + 5 * 60_000 };
+    return tok;
+  } catch {
+    return "";
+  }
+}
+
+async function fetchEdgeJson(gatewayPath: string, vaultUrl: string): Promise<any> {
+  if (!isNativeStandalone()) {
+    try {
+      const r = await timedFetch(gatewayPath, 4500);
+      return await r.json();
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const tok = await fetchNativeEdgeToken();
+    const hdrs: Record<string, string> = { accept: "application/json" };
+    if (tok) hdrs.authorization = tok.startsWith("Bearer ") ? tok : `Bearer ${tok}`;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    try {
+      const r = await fetch(vaultUrl, { headers: hdrs, signal: ctrl.signal });
+      if (!r.ok) return null;
+      return await r.json();
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    return null;
+  }
+}
+
+export async function edgeMatches(): Promise<SportMatch[]> {
+  const d = await fetchEdgeJson("/api/edge/matches", getVault().edgeMatches);
+  const raw = Array.isArray(d?.matches) ? d.matches : Array.isArray(d?.data) ? d.data : [];
+  return raw.map((m: any, i: number) => ({
+    id: "em-" + String(m.id ?? i),
+    title: decode(m.title || m.name || "Live Match"),
+    image: m.image || m.leagueLogo || "",
+    status: String(m.status || "live").toLowerCase(),
+    statusDetail: decode(m.statusDetail || m.statusLabel || ""),
+    sport: m.sport || "Sports",
+    league: decode(m.league || ""),
+    leagueLogo: m.leagueLogo,
+    teamA: m.teamA ? { name: decode(m.teamA.name), logo: m.teamA.logo } : undefined,
+    teamB: m.teamB ? { name: decode(m.teamB.name), logo: m.teamB.logo } : undefined,
+    start: m.startsAtUtc || m.startTime,
+    dhakaTime: decode(m.dhakaTime),
+    servers: toSources(m.servers || m.streams || []),
+  }));
+}
+
+export async function edgeEntertainment(): Promise<BongoCategory[]> {
+  const [ent, feed] = await Promise.all([
+    fetchEdgeJson("/api/edge/entertainment", getVault().edgeEnt),
+    fetchEdgeJson("/api/edge/feed", getVault().edgeFeed),
+  ]);
+  const out: BongoCategory[] = [];
+  const parseList = (obj: any, key: string, title: string) => {
+    const arr = Array.isArray(obj?.items) ? obj.items : Array.isArray(obj?.data) ? obj.data : Array.isArray(obj) ? obj : [];
+    if (!arr.length) return;
+    out.push({
+      key,
+      title,
+      items: arr.slice(0, 30).map((it: any, idx: number) => ({
+        id: `${key}-${it.id ?? idx}`,
+        title: decode(it.title || it.name || "Drama"),
+        thumbnail: it.thumbnail || it.poster || it.image || "",
+        landscape: it.landscape || it.backdrop || it.thumbnail || "",
+        category: decode(it.category || it.genre || title),
+        watchUrl: it.stream_url || it.url || it.hls_url,
+      })),
+    });
+  };
+  parseList(ent, "tapmad-ent", "Tapmad Entertainment");
+  parseList(feed, "web-feed", "Web Feed");
+  return out;
+}
+
 export async function loadSports(): Promise<SportsData> {
-  const [a, b, c] = await Promise.allSettled([sportsMatches(), sportsFeed(), sportsMukulLive()]);
-  if (a.status === "rejected" && b.status === "rejected" && c.status === "rejected") throw c.reason;
+  const micro = readMicroCache<SportsData>("sports_feed", 90_000);
+  if (micro && micro.matches.length > 0) {
+    // Silent background revalidate
+    void (async () => {
+      try {
+        const fresh = await fetchFreshSports();
+        if (fresh.matches.length) writeMicroCache("sports_feed", fresh);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return micro;
+  }
+  const fresh = await fetchFreshSports();
+  if (fresh.matches.length) writeMicroCache("sports_feed", fresh);
+  return fresh;
+}
+
+async function fetchFreshSports(): Promise<SportsData> {
+  const [a, b, c, e] = await Promise.allSettled([sportsMatches(), sportsFeed(), sportsMukulLive(), edgeMatches()]);
+  if (a.status === "rejected" && b.status === "rejected" && c.status === "rejected" && e.status === "rejected") throw c.reason;
   const byKey = new Map<string, SportMatch>();
   [
+    ...(e.status === "fulfilled" ? e.value : []),
     ...(c.status === "fulfilled" ? c.value : []),
     ...(b.status === "fulfilled" ? b.value.matches : []),
     ...(a.status === "fulfilled" ? a.value : []),
@@ -746,7 +915,7 @@ export async function loadSports(): Promise<SportsData> {
     const ex = byKey.get(k);
     if (!ex) return void byKey.set(k, { ...m, servers: [...m.servers] });
     m.servers.forEach((sv) => {
-      if (!ex.servers.find((e) => e.url === sv.url)) ex.servers.push({ ...sv, label: sv.label || `সার্ভার ${ex.servers.length + 1}` });
+      if (!ex.servers.find((x) => x.url === sv.url)) ex.servers.push({ ...sv, label: sv.label || `সার্ভার ${ex.servers.length + 1}` });
     });
     ex.image = ex.image || m.image;
     ex.league = ex.league || m.league;

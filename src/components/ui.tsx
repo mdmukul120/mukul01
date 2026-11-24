@@ -292,9 +292,9 @@ export function PageHeader({ title, subtitle, right }: { title: string; subtitle
 export function Footer() {
   return (
     <footer className="mt-10 border-t border-line bg-surface/80 px-5 py-5 text-center text-[13px] text-mute">
-      <p>Copyright © 2026 Mukul Plus. All Rights Reserved.</p>
+      <p>Copyright © 2026 Movie Hub+. All Rights Reserved.</p>
       <p className="mt-1">
-        Developed By: <span className="font-bold text-neon">Mukul</span>
+        Developed By: <span className="font-bold text-neon">Movie Hub+</span>
       </p>
     </footer>
   );

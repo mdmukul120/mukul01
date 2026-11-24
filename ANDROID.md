@@ -1,7 +1,6 @@
-# Mukul Plus – Android অ্যাপ (অটো বিল্ড ও রিলিজ)
+# Movie Hub+ – Kotlin Android অ্যাপ (১০x সিকিউর অটো বিল্ড ও রিলিজ)
 
-`main` ব্রাঞ্চে push করলেই GitHub Actions (`.github/workflows/android.yml`) নিজে থেকে
-APK বানিয়ে **Releases** পেজে `v1.0.<রান নম্বর>` ট্যাগে আপলোড করে দেয়।
+`main` ব্রাঞ্চে push করলেই GitHub Actions (`.github/workflows/android-build.yml`) নিজে থেকে Kotlin + R8 প্রোটেকশনসহ APK বানিয়ে **Releases** পেজে `v1.0.<রান নম্বর>` ট্যাগে আপলোড করে দেয়।
 
 ## একবারের সেটআপ
 

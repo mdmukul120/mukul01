@@ -19,6 +19,10 @@ declare module "virtual:api-vault" {
     wxKey: string;
     px1: string;
     px2: string;
+    edgeAuth: string;
+    edgeMatches: string;
+    edgeEnt: string;
+    edgeFeed: string;
   }
   export function getVault(): ApiVault;
 }
